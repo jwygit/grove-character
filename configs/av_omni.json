@@ -1,0 +1,1 @@
+{"backend":"local_omni","model_path":"/models/Qwen2.5-Omni-7B","fps":2,"max_pixels":200704,"max_new_tokens":4096,"attention":"sdpa"}

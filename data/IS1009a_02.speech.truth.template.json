@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "reviewed": false,
+  "synthetic": false,
+  "media_sha256": "ab80d0ae2121fb5e03ae8b0cd063d51efc1d7cbbd09559c09e4782f3572c1bf2",
+  "duration": 60.0,
+  "language": "en",
+  "segments": [],
+  "note": "Manually annotate all speech turns with id/start/end/text/speaker; blank is not silence ground truth."
+}

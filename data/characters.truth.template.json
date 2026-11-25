@@ -1,0 +1,11 @@
+{
+  "reviewed": false,
+  "evaluation_set_id": "SET_SHARED_MANUALLY_ALIGNED_UNITS",
+  "units": [
+    {
+      "unit_id": "reference-fact-1",
+      "role": "speaker",
+      "character_id": "human-person-A"
+    }
+  ]
+}

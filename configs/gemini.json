@@ -1,0 +1,1 @@
+{"backend":"gemini","model":"SET_AVAILABLE_GEMINI_MODEL_ID","api_key_env":"GEMINI_API_KEY","timeout":300}

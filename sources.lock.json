@@ -1,0 +1,23 @@
+{
+  "grove": {
+    "url": "https://github.com/SitongGong/Grove.git",
+    "commit": "5e437cff027ab7df969c17bdb8fc243a6e70961d",
+    "patch_sha256": "5b660c58d09e380abf68de1b970846f77f62b65078769e481307211d0f7f4fe4",
+    "bundle_sha256": "78bc4c930410c849b87febeb209e34c488948b31dd762500260458e97c2524c1"
+  },
+  "person_identity": {
+    "url": "https://github.com/jwygit/person-identity.git",
+    "commit": "256f2abb50cb79b043d61f3cd18a4f50460392f9",
+    "note": "AV adapter/core originated in uncommitted experiments/av_compare; exact snapshots hashed below"
+  },
+  "m3_agent": {
+    "url": "https://github.com/ByteDance-Seed/m3-agent.git",
+    "commit": "0e3e41939bd8a0b66d756e7b7eb8d5fe9992da5c"
+  },
+  "reused_files": {
+    "lab/reused/__init__.py": "4cedd54420681b06f9cdcc53c66baec8c70e1368552b8af8bc2019d5fa3fa68e",
+    "lab/reused/core.py": "989b04ff193b7003645cb25ed620870df1cae67406ae9d174a7e5fd37698a5d1",
+    "lab/reused/backends.py": "ed92175179a622d43db3e6d982330cae499f5c2d270234a6d84d8d590914d9b0",
+    "lab/reused/identity.py": "7f4e740671cc63a0fb121a169674054da77d6a25688cf24c76a67108c1e03c28"
+  }
+}
