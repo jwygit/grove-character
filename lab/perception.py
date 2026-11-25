@@ -25,7 +25,7 @@ def episode_turns(speech, start, end, source):
     return turns
 
 
-def extract(video, speech, start, end, origin, source, episode_id, config, out):
+def extract(video, speech, start, end, origin, source, episode_id, config, out, source_wav=None):
     if any(config[k].startswith('SET_') for k in ('face_model_id','voice_model_id')):
         raise ValueError('replace model IDs with exact weight fingerprints before extraction')
     import cv2
@@ -37,8 +37,15 @@ def extract(video, speech, start, end, origin, source, episode_id, config, out):
     subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-i', str(video), '-ss', str(start),
                     '-t', str(end-start), '-c:v', 'libx264', '-c:a', 'aac', '-n', str(clip)], check=True)
     wav = out/'audio.wav'
-    from .common import audio
-    audio(clip, wav)
+    from .common import audio, digest
+    from .voices import slice_pcm, eligible_turns
+    if source_wav is None:
+        source_wav = out/'source_audio.wav'
+        audio(video, source_wav)
+    # Verify the same decoded audio as the ASR stage when provenance is available.
+    if speech.get('audio_sha256') and digest(source_wav) != speech['audio_sha256']:
+        raise ValueError('voice audio differs from the ASR input')
+    slice_pcm(source_wav, wav, start, end)
     app = FaceAnalysis(name=config.get('face_model', 'buffalo_l'),
                        root=config['insightface_root'],
                        providers=config.get('providers', ['CUDAExecutionProvider', 'CPUExecutionProvider']))
@@ -96,8 +103,7 @@ def extract(video, speech, start, end, origin, source, episode_id, config, out):
         raise ValueError('too many face clusters; shorten common episodes')
     turns = episode_turns(speech, start, end, source)
     # Transcript is retained for short turns; only voice embedding can be skipped.
-    eligible = [u for u in turns if u['end']-u['start'] >= config.get('min_voice_seconds', 2)
-                and not u.get('overlap', False)]
+    eligible = eligible_turns(turns, config.get('min_voice_seconds', 2))
     if eligible:
         import torch
         from speakerlab.process.processor import FBank
@@ -119,4 +125,5 @@ def extract(video, speech, start, end, origin, source, episode_id, config, out):
                 model=config['voice_model_id'], embedding=vector))
             u['voice_observation_id'] = obs_id
     return dict(id=episode_id, source=source, time_origin=origin+start, duration=end-start,
-                video=str(clip.resolve()), faces=faces, utterances=turns, observations=observations)
+                video=str(clip.resolve()), faces=faces, utterances=turns, observations=observations,
+                voice_audio_sha256=digest(wav), source_audio_sha256=digest(source_wav), voice_pipeline_version=2)

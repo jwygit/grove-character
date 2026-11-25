@@ -66,9 +66,11 @@ python -m lab perceive --video data/media/IS1009a_01.mp4 --speech runs/speech-lo
 python -m lab associate --bundle runs/perception-ep1/bundle.json --config configs/av_omni.json --accept-model-links --out runs/av-ep1
 ```
 
-`perceive` 产生裁剪视频、每簇最多 3 张脸图、face/voice observations 和统一时间戳，另存 `face_detections.json` 记录所有检测的分数、特征、时间和聚类标签。使用 M3 HDBSCAN 和两阶段质量筛选，默认 min_cluster_size=20；短 episode/短暂人物可能没有合格簇，不会自动退回阈值去重。首次 GPU 调通需检查人脸质量和声纹输出 shape。没有 lip-sync tracker。短于阈值/被前端标为 overlap 的语音不提声纹，但仍保留转录。
+`perceive` 产生裁剪视频、每簇最多 3 张脸图、face/voice observations 和统一时间戳，另存 `face_detections.json` 记录所有检测的分数、特征、时间和聚类标签。使用 M3 HDBSCAN 和两阶段质量筛选，默认 min_cluster_size=20；短 episode/短暂人物可能没有合格簇，不会自动退回阈值去重。声音从 speech 结果旁的 `audio.wav` 无损裁剪，校验与 ASR 一致的音频哈希；文件不在时从原视频直接解码，绝不从 AAC 重编码片段提声纹。统一只做 >=2 秒时长筛选，不按前端独有 overlap 标记筛除。短句文字保留，但没有声纹身份。首次 GPU 调通仍需检查人脸质量与声纹输出。
 
-`associate` 复用现有 AV 适配器；Gemini AV 对照可换 `configs/gemini.json`。后一 episode 用 `--prior runs/av-ep1/snapshot.json` 传入图快照。人脸按 M3 多代表特征平均相似度匹配，默认 0.3，匹配特征池上限 10；可由 perception 配置的 `img_matching_threshold` 或 AV 配置的 `reid_thresholds.face` 覆盖。声音历史匹配仍须在 AV 配置显式加 `reid_thresholds.voice` 和 `reid_margin`。以上阈值需真实数据验证。
+`associate` 先完成声音节点匹配，再以 `voice_groups` 形式调用 AV 适配器；Gemini AV 对照可换 `configs/gemini.json`。后一 episode 用 `--prior runs/av-ep1/snapshot.json` 传入图快照。人脸默认均值阈值 0.3/特征池 10，声音默认均值阈值 0.6/特征池 20；配置分别为 `img_matching_threshold` / `max_img_embeddings` 与 `audio_matching_threshold` / `max_audio_embeddings`。AV 配置的 `reid_thresholds.face` / `.voice` 可覆盖阈值，`reid_margin` 已不适用且会报错。以上默认参数沿用 M3，仍需真实数据验证。
+
+新 snapshot 增加 `voice_groups`、`voice_links`、`excluded_voice_turns`，每条 character_ref 增加 `voice_id` 和 `visible_face_id`。音画模型需返回完整的声音身份关系与逐条可见性；未知/画外音为 null。旧 bundle 的语音来自不同切片路径，需重跑 `perceive` 生成 `voice_pipeline_version=2`，再运行 `associate`。不要拿旧结果缓存冒充新实验。`specialists` 的旧逐句协议暂不支持新的声音分组入口；默认 Omni 和 Gemini 均已接入新协议。
 
 需要先隔离 AV 错误时，将人工校正轮次制成相同 speech result schema，注明其 oracle 来源，再提取 bundle。更换前端时应复制冻结的人脸 gallery/observations，只重做声音证据，避免人脸模型随机差异混入对比。当前没有批量冻脸 orchestration，需人工检查 bundle 的 face 部分一致。
 

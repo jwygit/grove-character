@@ -95,30 +95,32 @@ def main():
         if not 0 <= args.start < args.end <= speech['duration']:
             raise ValueError('episode outside source media')
         bundle = extract(args.video, speech, args.start, args.end, args.time_origin,
-                         args.source, args.episode_id, read(args.config), args.out)
+                         args.source, args.episode_id, read(args.config), args.out,
+                         source_wav=(args.speech.parent/'audio.wav') if (args.speech.parent/'audio.wav').is_file() else None)
         bundle['speech_sha256'] = digest(args.speech)
         bundle['source_media_sha256'] = digest(args.video)
         bundle['config'] = read(args.config)
         write(args.out/'bundle.json', bundle)
     elif args.command == 'associate':
-        from .association import resolve
+        from .association import associate
         from .reused.backends import Backend
-        from .reused.core import normalize_prediction
         args.out.mkdir(parents=True, exist_ok=False)
         bundle, config = read(args.bundle), read(args.config)
+        if bundle.get('voice_pipeline_version') != 2:
+            raise ValueError('rerun perceive: grouped voice association requires v2 common-PCM evidence')
+        if 'reid_margin' in config:
+            raise ValueError('remove reid_margin: M3 voice matching uses node mean similarity without margin')
         if config['backend'] == 'replay':
             raise ValueError('replay is for unit tests only, not this real inference command')
         backend = Backend(config, args.config.resolve().parent)
         started = time.perf_counter()
         try:
-            raw = backend.infer(bundle, 'association')
-            prediction = normalize_prediction(raw, bundle, 'association')
             prior = read(args.prior)['graph'] if args.prior else None
-            snapshot = resolve(bundle, prediction, prior, args.accept_model_links,
-                               config.get('reid_thresholds'), config.get('reid_margin', .08))
+            snapshot = associate(bundle, backend, prior, args.accept_model_links,
+                                 config.get('reid_thresholds'))
             snapshot.update(bundle_sha256=digest(args.bundle), config=config,
                             prior_sha256=digest(args.prior) if args.prior else None,
-                            raw=raw, environment=metadata(), wall_seconds=time.perf_counter()-started)
+                            environment=metadata(), wall_seconds=time.perf_counter()-started)
             write(args.out/'snapshot.json', snapshot)
         except Exception as error:
             write(args.out/'failure.json', {'status': 'failed', 'error_type': type(error).__name__,

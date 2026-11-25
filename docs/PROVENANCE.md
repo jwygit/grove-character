@@ -6,6 +6,7 @@
 - person-identity：https://github.com/jwygit/person-identity （用户私有项目）。复用 identity.py 为 lab/reused/identity.py；复用未提交 av_compare 的 backends.py/core.py 为真实 AV 适配与时间积分指标。旧实验目录保留原样，新的三阶段实验没有沿用旧实验目标。
 - M3-Agent：https://github.com/ByteDance-Seed/m3-agent 。参考 voice_processing.py 的 ERes2NetV2（192 维）与 FBank（80 维、16kHz）；新 perception.py 独立初始化，避免原文件导入时立即加载 CUDA。该代码来源采用 Apache-2.0；相关模型权重的使用条款另依原发布者。
 - 人脸更新：`mmagent/src/face_clustering.py` 原样复制为 `lab/reused/m3_face_clustering.py`（保留版权头，SHA-256 记录在 sources.lock.json）。`lab/faces.py` 适配 `face_processing.py` 的两阶段筛选/排序与 `videograph.py` 的多代表脸平均余弦匹配。固定采样 seed、图证据结构和 episode 范围是适配差异，详见 DESIGN.md；旧简化去重实现留在 Git 历史。
+- 声音更新：`lab/voices.py` 适配 `voice_processing.py` 的时长筛选和逐条声音节点归并、`videograph.py` 的平均相似度匹配与最多 20 条特征。`lab/reused/backends.py` 已在原快照上增加 voice_association 分组协议，不再是原文件逐字节副本；sources.lock.json 记录原始快照哈希与当前适配版哈希。
 - M3 的 Gemini 只做轮次/ASR、稳定 voice ID 依赖后续声纹及图；本实验未把 Gemini 输出当作全局 speaker ID。没有复制 M3 的整套 memorization/reasoning agent。
 
 核对本地替代实现时使用的官方资料：

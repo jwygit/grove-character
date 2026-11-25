@@ -19,5 +19,8 @@
   "max_faces_per_character": 3,
   "img_matching_threshold": 0.3,
   "max_img_embeddings": 10,
-  "face_sampling_seed": 0
+  "face_sampling_seed": 0,
+  "audio_matching_threshold": 0.6,
+  "max_audio_embeddings": 20,
+  "voice_sampling_seed": 0
 }

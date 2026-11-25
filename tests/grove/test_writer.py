@@ -14,6 +14,26 @@ from hypervideo.modules.character_identity import SnapshotProvider, facts_from_r
 
 
 class GroveTests(unittest.IsolatedAsyncioTestCase):
+    async def test_grouped_voice_survives_grove_write_and_reload(self):
+        from lab.association import associate
+        from tests.modules.test_voices import repeated_bundle
+        class Backend:
+            def infer(self,clip,mode):
+                return {'voice_links':[dict(voice_id=clip['voice_groups'][0]['voice_id'],face_id='ep1:f1')],
+                        'segments':[dict(utterance_id='u1',face_id='ep1:f1'),dict(utterance_id='u3',face_id=None)]}
+        snapshot=associate(repeated_bundle(),Backend(),accept_links=True)
+        async def llm(prompt):
+            if '"facts"' in prompt:
+                return json.dumps({'facts':[dict(content='hello',utterance_ids=['u1']),
+                                             dict(content='again from offscreen',utterance_ids=['u3'])]})
+            return json.dumps(dict(summary='The same person speaks twice',subject='Chat'))
+        with tempfile.TemporaryDirectory() as d:
+            graph=await write_episode(episode(),snapshot,llm,Path(d)/'graph.json')
+            refs=[f['character_refs'][0] for f in graph['facts'].values()]
+            self.assertEqual(refs[0]['voice_id'],refs[1]['voice_id'])
+            self.assertEqual(refs[0]['character_id'],refs[1]['character_id'])
+            self.assertIsNone(refs[1]['visible_face_id'])
+
     async def asyncSetUp(self):
         self.snapshot=resolve(bundle(),predictions(),accept_links=True)
         self.ep=VideoEpisode.from_dict(episode())

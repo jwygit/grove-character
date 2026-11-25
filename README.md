@@ -20,11 +20,13 @@
 1. `speech`：对完整测试片段做语音分段和转录。分别运行 Gemini、faster-whisper large-v3 + pyannote community-1，或中文 FunASR（Paraformer-zh + FSMN-VAD + ct-punc + CAM++），不是依次串联三组模型。
 2. 提供固定 episode 时间范围：可以来自已有 Grove 结果，联调也可以人工指定；当前独立入口不会自动跑完整 Grove 动态分段。
 3. `perceive`：按 episode 裁剪音视频，用 InsightFace buffalo_l 按 5 FPS 提取人脸，执行 M3 原始 HDBSCAN、质量筛选及每簇最多 3 张代表脸选择；用 ERes2NetV2 提取每段合格语音的声纹。
-4. `associate`：按 `configs/av_omni.json` 使用 **Qwen2.5-Omni-7B**，输入带音轨视频、人脸参考图、发言时间与转录，预测每段发言对应的 face_id 或 null。这一步才是脸与声音的跨模态关联；也可切换 Gemini 作为对照。
-5. 人物图：按 M3 的多代表脸平均余弦相似度匹配人脸节点，默认阈值 0.3、每节点最多 10 个匹配特征；用 `--prior` 接入历史快照。face/voice 跨模态边仍需 `--accept-model-links` 才确认。历史声音重识别需显式配置 `reid_thresholds.voice`；不直接比较脸向量和声音向量。
+4. `associate` 先建立人物证据节点：人脸按多代表脸平均余弦相似度匹配（默认 0.3，最多 10 个特征）；声音按 M3 的节点平均相似度匹配（默认 0.6，最多 20 条声纹）。相同声音的发言先归为同一个 `voice_id`，再进入模型；用 `--prior` 接入历史快照。
+5. 音画关联：按 `configs/av_omni.json` 使用 **Qwen2.5-Omni-7B**，输入带音轨视频、人脸参考图和按 voice_id 汇总的多段发言，输出 voice→face 关系及每段的画内说话人；也可切换 Gemini。`--accept-model-links` 才确认跨模态关联。画外发言可以保留已知 character，但 visible_face_id 为 null。
 6. `grove-write`：将身份快照注入固定 episode，用配置的 writer 生成摘要与 facts，按其引用的 utterance_ids 写入 character_refs，并保存/重载 Grove 图。
 
 Omni 默认配置是基础 Qwen2.5-Omni-7B，**不是 M3-Agent 微调权重**。借鉴的是 M3 的处理分工；当前模型适配器尚未做真实 GPU 准确率验证。并行取证、动态边界后的实时等待属于完整接入目标，不能等同于当前离线命令已经完成实时调度。
+
+所有语音前端统一从同一份 16kHz 单声道 PCM 切片提声纹，不再从重新编码的视频音轨提取。统一采用 >=2 秒时长门限，不根据某个前端独有的 overlap 标签过滤。短句文字保留到 Grove，但不创建声纹身份、不参加音画身份关联。升级后需重新运行 `perceive` 和 `associate`，旧版 bundle 会被明确拒绝。
 
 ## 本机立即可跑
 
