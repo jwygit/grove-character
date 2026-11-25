@@ -1,4 +1,4 @@
-# Grove character 实验项目
+# Grove Character
 
 目标：并行提取人脸/声音证据，在 **Grove 确定 episode 边界后、生成最终摘要和 facts 前** 解析人物身份。先测组件，再测记忆写入的 character 归属。
 
@@ -15,6 +15,17 @@
 
 详细设计见 [实验设计](docs/DESIGN.md)，GPU/API 操作见 [运行手册](docs/RUNBOOK.md)，复用关系见 [代码来源](docs/PROVENANCE.md)，实际验证见 [测试记录](docs/VALIDATION.md)。
 
+## 当前离线流程与模型
+
+1. `speech`：对完整测试片段做语音分段和转录。分别运行 Gemini、faster-whisper large-v3 + pyannote community-1，或中文 FunASR（Paraformer-zh + FSMN-VAD + ct-punc + CAM++），不是依次串联三组模型。
+2. 提供固定 episode 时间范围：可以来自已有 Grove 结果，联调也可以人工指定；当前独立入口不会自动跑完整 Grove 动态分段。
+3. `perceive`：按 episode 裁剪音视频，用 InsightFace buffalo_l 检测/提取人脸特征并聚类，用 ERes2NetV2 提取每段合格语音的声纹。
+4. `associate`：按 `configs/av_omni.json` 使用 **Qwen2.5-Omni-7B**，输入带音轨视频、人脸参考图、发言时间与转录，预测每段发言对应的 face_id 或 null。这一步才是脸与声音的跨模态关联；也可切换 Gemini 作为对照。
+5. 人物图：保存关联候选；使用 `--accept-model-links` 才按实验策略确认 face/voice 边。历史身份重识别还需传入 `--prior` 并显式设置 `reid_thresholds`，在同模态内比较特征，不直接比较脸向量和声音向量。
+6. `grove-write`：将身份快照注入固定 episode，用配置的 writer 生成摘要与 facts，按其引用的 utterance_ids 写入 character_refs，并保存/重载 Grove 图。
+
+Omni 默认配置是基础 Qwen2.5-Omni-7B，**不是 M3-Agent 微调权重**。借鉴的是 M3 的处理分工；当前模型适配器尚未做真实 GPU 准确率验证。并行取证、动态边界后的实时等待属于完整接入目标，不能等同于当前离线命令已经完成实时调度。
+
 ## 本机立即可跑
 
 在本项目目录执行：
@@ -30,8 +41,8 @@
 从 GitHub 部署：
 
 ```bash
-git clone https://github.com/jwygit/grove-character-lab.git
-cd grove-character-lab
+git clone https://github.com/jwygit/grove-character.git
+cd grove-character
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-test.txt
