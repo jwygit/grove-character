@@ -1,0 +1,8 @@
+{
+  "use_visual_channel": true,
+  "visual_index_path": "/data/grove/visual_index.npz",
+  "visual_server_url": "http://SET_ENCODER_HOST:9090",
+  "visual_min_score": 0.2,
+  "retrieval_score_propagation": "none",
+  "fact_top_k": 12
+}

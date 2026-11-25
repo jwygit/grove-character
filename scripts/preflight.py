@@ -8,7 +8,9 @@ grove=root/'vendor/Grove'
 missing=[p for p in ['hypervideo/extractors/fact_extractor.py','hypervideo/extractors/fact_deduplicator.py',
                     'hypervideo/extractors/llm_utils.py','hypervideo/prompts/episode_prompts.py',
                     'hypervideo/prompts/topic_prompts.py','hypervideo/modules/audio_cues/asr.py',
-                    'hypervideo/modules/audio_cues/diarization.py'] if not (grove/p).is_file()]
+                    'hypervideo/modules/audio_cues/diarization.py',
+                    'hypervideo/index/bm25_index.py','hypervideo/index/embedding_index.py',
+                    'hypervideo/retrieval/rrf_fusion.py'] if not (grove/p).is_file()]
 print(json.dumps({'ffmpeg':shutil.which('ffmpeg'),'grove_checkout':grove.is_dir(),
                   'missing_upstream_files':missing,
                   'test_dependencies':{p:importlib.util.find_spec(p) is not None for p in ['numpy','pydantic','hdbscan']},

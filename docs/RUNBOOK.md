@@ -1,5 +1,7 @@
 # 运行手册
 
+visual clip 与 fact 联合检索的启用配置、API 协议和验证步骤见 [VISUAL_RETRIEVAL.md](VISUAL_RETRIEVAL.md)。
+
 以下命令从本项目根目录运行。每次 `--out` 使用新目录，避免覆盖旧证据。所有模型路径需要替换；配置只放环境变量名，不放密钥。
 
 ## 1. CPU 单测与依赖

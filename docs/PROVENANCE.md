@@ -1,5 +1,7 @@
 # 来源与复用范围
 
+视觉检索更新：在同一固定 Grove 副本中补齐 `mmlifelong_week_retrieval_v2.py` 的 Stage E TODO；新增共享的 `retrieval/multimodal.py`，复用 Grove 真实图节点、文本索引接口与跨层得分传递，接入 `HierarchicalRetriever`。改进 `visual_retriever.py` 的候选过滤、错误处理、远程 encoder 接口与索引校验；三个 `visual_indexing.py` 构建入口修正 day offset，现有可选 visual rerank 限定为已命中 clip。没有复制或伪造缺失的 BM25/embedding 索引与 GPU server 实现，具体范围见 VISUAL_RETRIEVAL.md。
+
 检索/核对日期：2026-11-25。精确提交与快照 SHA-256 见项目根目录 sources.lock.json。
 
 - Grove：https://github.com/SitongGong/Grove 。已 git fetch 核对，上游 main 与本地基线一致。实验副本修改 episode segmenter、builder、types、structure，并增加 character_identity 模块。没有改原兄弟目录。

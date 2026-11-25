@@ -1,3 +1,21 @@
+diff --git a/hypervideo/config.py b/hypervideo/config.py
+index 0bb6c77..11a7098 100644
+--- a/hypervideo/config.py
++++ b/hypervideo/config.py
+@@ -122,6 +122,13 @@ class HyperVideoConfig:
+     # NanoVectorDB 文件命名空间：vdb_{namespace}.json
+     visual_retrieval_namespace: str = "window_visual"
+ 
++    # Query-time leaf channel, separate from optional ImageBind construction above.
++    use_visual_channel: bool = False
++    visual_index_path: Optional[str] = None
++    visual_server_url: Optional[str] = None
++    visual_min_score: Optional[float] = None
++    retrieval_score_propagation: str = "none"
++
+     # ---- Index ----
+     # 超图嵌入传播权重 λ
+     embedding_propagation_lambda: float = 0.5
 diff --git a/hypervideo/extractors/episode_segmenter.py b/hypervideo/extractors/episode_segmenter.py
 index f4630f8..af4ffca 100644
 --- a/hypervideo/extractors/episode_segmenter.py
@@ -84,6 +102,413 @@ index 436562d..8266737 100644
              and getattr(self._config, "egolife_accumulative_event_enabled", True)
          )
  
+diff --git a/hypervideo/mmlifelong_week_retrieval_v2.py b/hypervideo/mmlifelong_week_retrieval_v2.py
+index 1d2b35e..2af6e56 100644
+--- a/hypervideo/mmlifelong_week_retrieval_v2.py
++++ b/hypervideo/mmlifelong_week_retrieval_v2.py
+@@ -19,18 +19,6 @@
+ """
+ from __future__ import annotations
+ 
+-# Pre-import nano_vectordb BEFORE transformers gets touched downstream:
+-# nano_vectordb pulls sqlite3 which transitively needs libicui18n.so.78 with
+-# CXXABI_1.3.15; if transformers loads the system libstdc++ (older CXXABI) first,
+-# sqlite3's later import fails. Pre-importing here lets it bind to conda's
+-# libstdc++ via torch's RPATH while torch is still the first heavy load.
+-import torch  # noqa: F401  # pull conda libstdc++ first
+-try:
+-    import nano_vectordb as _nvdb_preload  # noqa: F401
+-except Exception as _e:
+-    import logging as _lg
+-    _lg.getLogger(__name__).warning(f"pre-import nano_vectordb failed: {_e}")
+-
+ import argparse
+ import asyncio
+ import json
+@@ -40,16 +28,13 @@ import re
+ import sys
+ import time
+ from collections import defaultdict
+-from typing import Any, Dict, List, Optional, Set, Tuple
++from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
+ 
+ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ 
+-from videorag._llm import LLMConfig, openai_embedding, gpt_4o_mini_complete  # noqa: E402
+-from videorag._utils import always_get_an_event_loop  # noqa: E402
+-from hypervideo.hyper_video_graph import HyperVideoGraph  # noqa: E402
+-from hypervideo.config import HyperVideoConfig  # noqa: E402
+-from hypervideo.mmlifelong_week_router import route_and_answer  # noqa: E402
+-from hypervideo.skills import SkillContext, route_with_skills, load_all_skills  # noqa: E402
++if TYPE_CHECKING:
++    from videorag._llm import LLMConfig
++    from hypervideo.hyper_video_graph import HyperVideoGraph
+ 
+ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+ logger = logging.getLogger(__name__)
+@@ -60,6 +45,7 @@ logger = logging.getLogger(__name__)
+ # =============================================================================
+ 
+ def _build_llm_config(answer_model: str = "gpt-4.1-mini") -> LLMConfig:
++    from videorag._llm import LLMConfig, openai_embedding, gpt_4o_mini_complete
+     return LLMConfig(
+         embedding_func_raw=openai_embedding,
+         embedding_model_name="text-embedding-3-small",
+@@ -246,8 +232,10 @@ Output STRICT JSON only:
+ 
+ STAGE2_PROMPT = """\
+ You are an egocentric long-video QA assistant for MM-Lifelong (EgoLife, 7-day).
+-You previously decided you needed more detail. Below are retrieved facts from
++You previously decided you needed more detail. Below is retrieved evidence (facts and visual clips) from
+ the target day plus their parent episodes (summary + description).
++Each item retains its type and ID. A visual clip caption describes that clip;
++it is not a separately verified fact. Ground your answer in the cited evidence IDs.
+ 
+ Now produce the FINAL answer. Do not request more retrieval.
+ 
+@@ -261,19 +249,19 @@ Question (target day = {target_day_str}):
+ {options_block}
+ 
+ ------------------------------------------------------------
+-RETRIEVED FACTS (top-{top_k}, target day only):
++RETRIEVED EVIDENCE (facts + visual clips, shared top-{top_k}, target day only):
+ ------------------------------------------------------------
+ {facts_block}
+ 
+ ------------------------------------------------------------
+-PARENT EPISODES of retrieved facts (summary + description):
++PARENT EPISODES of retrieved evidence (summary + description):
+ ------------------------------------------------------------
+ {parents_block}
+ 
+ ------------------------------------------------------------
+ Output STRICT JSON only:
+ 
+-{{"answer": "<final concise answer matching GT style>", "reasoning": "<one line grounding in facts/episodes>"}}
++{{"answer": "<final concise answer matching GT style>", "reasoning": "<one line grounding in typed evidence IDs and episodes>"}}
+ """
+ 
+ 
+@@ -342,10 +330,10 @@ class IndexedHypergraph:
+         hg = hyper_vg.hypergraph_builder.hypergraph
+ 
+         self.episodes_raw: Dict[str, dict] = {
+-            eid: _ep_to_dict(node) for eid, node in hg.episodes.items()
++            eid: dict(_ep_to_dict(node), id=eid) for eid, node in hg.episodes.items()
+         }
+         self.facts_raw: Dict[str, dict] = {
+-            fid: _fact_to_dict(node) for fid, node in hg.facts.items()
++            fid: dict(_fact_to_dict(node), id=fid) for fid, node in hg.facts.items()
+         }
+         self.ep_id_to_day: Dict[str, int] = {
+             eid: (_episode_day(e) or 0) for eid, e in self.episodes_raw.items()
+@@ -412,17 +400,8 @@ def _format_episodes_for_stage1(eps: List[dict], max_eps: int = 200, max_sm_char
+ 
+ 
+ def _format_facts_for_stage2(facts: List[dict], max_chars: int = 400) -> str:
+-    if not facts:
+-        return "(no facts retrieved)"
+-    lines = []
+-    for i, f in enumerate(facts):
+-        t = f.get('temporal', '')
+-        s = f.get('spatial', '')
+-        c = (f.get('content') or '')[:max_chars]
+-        ent = f.get('entity_canonical_name') or ''
+-        ent_str = f" [entity={ent}]" if ent else ""
+-        lines.append(f"  ({i+1}) [{t} @ {s}]{ent_str} {c}")
+-    return "\n".join(lines)
++    from hypervideo.retrieval.multimodal import format_evidence
++    return format_evidence(facts, max_chars)
+ 
+ 
+ def _format_parent_episodes(parents: List[dict], max_chars: int = 250) -> str:
+@@ -534,20 +513,22 @@ def _force_stage2(question: str, qtype: str) -> bool:
+ _VISUAL_RETRIEVER_CACHE: dict = {}
+ 
+ 
+-def _get_visual_retriever(visual_index_path: str):
+-    """单例缓存 VisualRetriever, 避免每题重新加载."""
+-    if visual_index_path in _VISUAL_RETRIEVER_CACHE:
+-        return _VISUAL_RETRIEVER_CACHE[visual_index_path]
+-    if not visual_index_path or not os.path.exists(visual_index_path):
++def _get_visual_retriever(visual_index_path: str, server_url=None, *, required=False):
++    """Cache by index revision and encoder endpoint, not just a stale filename."""
++    if not visual_index_path or not os.path.isfile(visual_index_path):
++        if required:
++            raise ValueError('visual channel requires a matching visual_index.npz')
+         return None
+-    try:
++    path = os.path.realpath(visual_index_path)
++    stat = os.stat(path)
++    key = (path, stat.st_mtime_ns, stat.st_size, server_url)
++    if key not in _VISUAL_RETRIEVER_CACHE:
+         from hypervideo.visual_retriever import VisualRetriever
+-        vr = VisualRetriever(visual_index_path)
+-        _VISUAL_RETRIEVER_CACHE[visual_index_path] = vr
+-        return vr
+-    except Exception as e:
+-        logger.warning(f"VisualRetriever load failed: {e}")
+-        return None
++        for old in list(_VISUAL_RETRIEVER_CACHE):
++            if old[0] == path and old[-1] == server_url:
++                del _VISUAL_RETRIEVER_CACHE[old]
++        _VISUAL_RETRIEVER_CACHE[key] = VisualRetriever(path, remote_url=server_url)
++    return _VISUAL_RETRIEVER_CACHE[key]
+ 
+ 
+ # =============================================================================
+@@ -725,10 +706,12 @@ async def _retrieve_day_scoped(
+     visual_index_path: Optional[str] = None,
+     score_prop: str = 'none',  # 'none' | 'mult' | 'additive' | 'rrf'
+     use_visual_channel: bool = False,
++    visual_server_url: Optional[str] = None,
++    visual_min_score: Optional[float] = None,
+     topic_top_n: int = 3,        # hierarchical_v2 用: topic 阶段取多少
+     ep_top_n: int = 0,           # hierarchical_v2 用: episode 阶段取多少, 0=max(top_k//2, 5)
+ ) -> Tuple[List[dict], List[dict], List[str]]:
+-    """6 种 day-scoped 检索. 返回 (facts, parent_episodes, debug_info_lines).
++    """Day-scoped retrieval. Returns (typed_evidence, parent_episodes, debug_lines).
+ 
+     mode:
+       - 'dual_fact_day' / 'fact_only_day':  在目标日 fact 子集上 RRF
+@@ -754,7 +737,7 @@ async def _retrieve_day_scoped(
+         cand_ep_ids = {eid for eid, e in indexed.episodes_raw.items()
+                        if indexed.ep_id_to_day.get(eid) == target_day}
+ 
+-    if not cand_fact_ids:
++    if not cand_fact_ids and not (mode == 'hierarchical_v2_day' and use_visual_channel):
+         cand_fact_ids = indexed.fact_ids_all()
+         cand_ep_ids = set(indexed.episodes_raw.keys())
+         debug.append(f"fallback to all (no facts on day {target_day})")
+@@ -897,6 +880,18 @@ async def _retrieve_day_scoped(
+         ep_scores = dict(ep_hits)
+         debug.append(f"hier_v2: topic_hits={len(topic_hits)} ep_hits={len(ep_hits)}")
+ 
++        if use_visual_channel:
++            from hypervideo.retrieval.multimodal import retrieve_leaves
++            selected = {eid for eid, _ in ep_hits} or topic_ep_ids
++            has_clips = any(node.parent_episode_id in selected for node in hg.visual_clips.values())
++            vr = _get_visual_retriever(visual_index_path, visual_server_url, required=True) if has_clips else None
++            evidence, parents, leaf_debug = await retrieve_leaves(
++                hg, dual, query, ep_hits, topic_hits, top_k=top_k,
++                allowed_episode_ids=topic_ep_ids, allowed_fact_ids=cand_fact_ids,
++                use_visual_channel=True, visual_retriever=vr,
++                score_prop=score_prop, min_visual_score=visual_min_score)
++            return evidence, parents, debug+leaf_debug
++
+         # Stage C: 取这些 episode 的 fact 候选
+         sub_fact_ids: Set[str] = set()
+         fact_to_ep: Dict[str, str] = {}
+@@ -945,23 +940,6 @@ async def _retrieve_day_scoped(
+             fact_hits = raw_fact_hits[:top_k]
+             debug.append("hier_v2: no score_prop")
+ 
+-        # Stage E: 可选 visual 通道 (需 hypergraph 有 visual_clips)
+-        if use_visual_channel and hasattr(hg, 'visual_clips') and hg.visual_clips:
+-            # 收集这些 episode 的 visual_clips
+-            vis_clip_ids: List[str] = []
+-            for eid, _ in ep_hits:
+-                ep_node = hg.episodes.get(eid)
+-                if ep_node is None:
+-                    continue
+-                wh_id = getattr(ep_node, 'window_hyperedge_id', None)
+-                if wh_id and wh_id in hg.episode_window_hyperedges:
+-                    vis_clip_ids.extend(hg.episode_window_hyperedges[wh_id].relation.keys())
+-            debug.append(f"hier_v2: visual_candidates={len(vis_clip_ids)}")
+-            # 用 visual encoder 算 query → visual_clip cosine
+-            # (留给后续实现 - 当前先把 caption_text 加到候选 facts 里, 简单实现)
+-            # TODO: 真正的 visual encoder 检索需要 visual_index.npz, 暂跳过
+-            debug.append("hier_v2: visual channel TODO (需 visual_retriever)")
+-
+     elif mode == 'entity_pagerank_day':
+         # HippoRAG-on-our-hypergraph (arXiv:2405.14831 思路, 但寄生在我们已有的
+         # entity_canonical_name 字段上, 不新建图).
+@@ -1007,7 +985,7 @@ async def _retrieve_day_scoped(
+         f = indexed.facts_raw.get(fid)
+         if not f:
+             continue
+-        retrieved_facts.append(f)
++        retrieved_facts.append(dict(f, node_type='fact', fact_id=fid))
+         for eid in (f.get('episode_ids') or []):
+             if eid in seen_ep_ids:
+                 continue
+@@ -1030,6 +1008,8 @@ async def answer_one_question_multi_mode(
+     visual_index_path: Optional[str] = None,
+     score_prop: str = 'none',
+     use_visual_channel: bool = False,
++    visual_server_url: Optional[str] = None,
++    visual_min_score: Optional[float] = None,
+     use_skills: bool = True,
+     enable_visual_rewrite: bool = False,
+     visual_rewrite_cfg: Optional[dict] = None,
+@@ -1101,13 +1081,15 @@ async def answer_one_question_multi_mode(
+     is_skill_candidate_qtype = (
+         must_retrieve or qtype in ('Causal Reasoning',)
+     )
+-    if is_skill_candidate_qtype:
++    visual_modes = {m for m in retrieval_modes if m == 'hierarchical_v2_day' and use_visual_channel}
++    if is_skill_candidate_qtype and set(retrieval_modes)-visual_modes:
+         try:
+             fb_facts, fb_eps, _ = await _retrieve_day_scoped(
+                 indexed, retrieval_query, target_day, cross_day,
+                 mode='dual_fact_day', top_k=effective_top_k,
+             )
+             if use_skills:
++                from hypervideo.skills import SkillContext, route_with_skills, load_all_skills
+                 load_all_skills()
+                 ctx = SkillContext(
+                     item=item, question=question, question_type=qtype,
+@@ -1122,6 +1104,7 @@ async def answer_one_question_multi_mode(
+                 )
+                 router_pred = await route_with_skills(ctx)
+             else:
++                from hypervideo.mmlifelong_week_router import route_and_answer
+                 router_pred = await route_and_answer(
+                     item, indexed, llm_cfg, target_day, cross_day,
+                     fallback_facts=fb_facts, fallback_eps=fb_eps,
+@@ -1129,7 +1112,7 @@ async def answer_one_question_multi_mode(
+         except Exception as e:
+             logger.warning(f"  router/skills failed: {e}")
+ 
+-    if router_pred is not None:
++    if router_pred is not None and not visual_modes:
+         shared = {
+             'answer': router_pred['answer'],
+             'reasoning': router_pred['reasoning'],
+@@ -1144,7 +1127,7 @@ async def answer_one_question_multi_mode(
+         return {m: dict(shared, retrieval_mode=m) for m in retrieval_modes}
+ 
+     # Router 没命中: 若 stage1 直答 -> 用 stage1; 否则走 stage2 检索
+-    if s1_type == 'answer':
++    if s1_type == 'answer' and not visual_modes:
+         shared_pred = {
+             'answer': s1_decision.get('answer', ''),
+             'reasoning': s1_decision.get('reasoning', ''),
+@@ -1158,6 +1141,14 @@ async def answer_one_question_multi_mode(
+ 
+     results: Dict[str, dict] = {}
+     for mode in retrieval_modes:
++        # Visual mode must retrieve; a summary/skill answer must not bypass its clips.
++        if mode not in visual_modes and (router_pred is not None or s1_type == 'answer'):
++            decision = router_pred if router_pred is not None else s1_decision
++            results[mode] = dict(answer=decision.get('answer', ''), reasoning=decision.get('reasoning', ''),
++                stage=2 if router_pred is not None else 1, retrieval_mode=mode,
++                target_day=target_day, cross_day=cross_day, retrieved=[], stage1_raw=(s1_resp or '')[:400],
++                router_subtype=decision.get('router_subtype'), skill_name=decision.get('skill_name'))
++            continue
+         try:
+             retrieved_facts, parent_eps, retrieval_debug = await _retrieve_day_scoped(
+                 indexed, retrieval_query, target_day, cross_day,
+@@ -1165,12 +1156,16 @@ async def answer_one_question_multi_mode(
+                 visual_index_path=visual_index_path,
+                 score_prop=score_prop,
+                 use_visual_channel=use_visual_channel,
++                visual_server_url=visual_server_url, visual_min_score=visual_min_score,
+                 topic_top_n=topic_top_n,
+                 ep_top_n=ep_top_n,
+             )
+         except Exception as e:
+             logger.error(f"  [{mode}] stage2 retrieve failed: {e}")
+-            retrieved_facts, parent_eps, retrieval_debug = [], [], [f"error: {e}"]
++            results[mode] = dict(status='failed', answer='(retrieval failed)', stage=2,
++                retrieval_mode=mode, target_day=target_day, cross_day=cross_day,
++                error=str(e), retrieved=[], retrieval_debug=[f'error: {e}'])
++            continue
+ 
+         # ---- (Pt2 v3) Visual rerank: LLM query rewrite + cosine threshold + VLM caption rewrite ----
+         visual_rewrite_block = ""
+@@ -1183,6 +1178,8 @@ async def answer_one_question_multi_mode(
+                 reranks = await query_aware_visual_rerank(
+                     query=retrieval_query,
+                     candidate_episodes=parent_eps,
++                    candidate_clip_ids={r['id'] for r in retrieved_facts if r.get('node_type') == 'visual_clip'}
++                        if mode in visual_modes else None,
+                     indexed=indexed,
+                     visual_server_url=visual_rewrite_cfg["visual_server_url"],
+                     visual_index_npz=visual_index_path,
+@@ -1238,9 +1235,17 @@ async def answer_one_question_multi_mode(
+             'retrieval_debug': retrieval_debug,
+             'retrieved': [
+                 {
+-                    'fact_id': f.get('id'),
+-                    'content': (f.get('content') or '')[:200],
++                    'node_type': f.get('node_type', 'fact'),
++                    'id': f.get('id'),
++                    **({'clip_id': f['id']} if f.get('node_type') == 'visual_clip' else {'fact_id': f.get('id')}),
++                    'content': (f.get('content') or '')[:400],
+                     'temporal': f.get('temporal'),
++                    'episode_ids': f.get('episode_ids', []),
++                    **({'caption_text': f.get('caption_text', ''), 'day': f.get('day'),
++                        'frame_time_span': f.get('frame_time_span')} if f.get('node_type') == 'visual_clip' else {}),
++                    'start_seconds': f.get('start_seconds'), 'end_seconds': f.get('end_seconds'),
++                    'score': f.get('score'), 'raw_score': f.get('raw_score'),
++                    'channel_rank': f.get('channel_rank'),
+                 }
+                 for f in retrieved_facts
+             ],
+@@ -1423,10 +1428,10 @@ def main():
+     parser.add_argument('--max_questions', type=int, default=0,
+         help=">0 时只跑前 N 题 (调试). 默认 0 = 全部")
+     parser.add_argument('--stage2_top_k', type=int, default=12)
+-    parser.add_argument('--retrieval_mode', type=str, default='hierarchical_day',
++    parser.add_argument('--retrieval_mode', type=str, default='hierarchical_v2_day',
+         help="Stage2 检索方式 (逗号分隔可多 mode). "
+              "可选: dual_fact_day, fact_only_day, episode_fact_day, hierarchical_day, "
+-             "visual_hybrid_day (需 --visual_index_path). "
++             "hierarchical_v2_day (fact + visual_clip), visual_hybrid_day (需 --visual_index_path). "
+              "多 mode 时 Stage1 共享, 每题 Stage2 各 mode 独立检索/答题, "
+              "输出 <out_path>.<mode>.json 4份")
+     parser.add_argument('--visual_index_path', type=str, default="${GROVE_WORK}/all_results/mmlifelong_week_full_bg/shared_hyper/visual_index_d12.npz",
+@@ -1435,7 +1440,7 @@ def main():
+         choices=['none', 'mult', 'additive', 'rrf'],
+         help="hierarchical_v2_day mode 跨层得分传递: none(默认, 兼容当前) / "
+              "mult (fact×ep×topic) / additive (α·fact+β·ep+γ·topic) / rrf")
+-    parser.add_argument('--use_visual_channel', action='store_true', default=True, 
++    parser.add_argument('--use_visual_channel', action=argparse.BooleanOptionalAction, default=True,
+         help="hierarchical_v2_day mode 是否启用 visual_clip 通道 (需 hypergraph 含 visual_clips)")
+     parser.add_argument('--answer_model', type=str, default='gpt-5.4-mini',
+         help="LLM (Stage1+Stage2 都用). 候选: gpt-4.1-mini / gpt-4o / gpt-4.1")
+@@ -1443,11 +1448,11 @@ def main():
+         help="启用插件式 skills 系统 (counting/temporal/causal 各自走专用路径). 默认 True.")
+     parser.add_argument('--no_skills', dest='use_skills', action='store_false',
+         help="禁用 skills 系统, 走旧版 mmlifelong_week_router.route_and_answer.")
+-    parser.add_argument('--enable_visual_rewrite', action='store_true', default=True, 
++    parser.add_argument('--enable_visual_rewrite', action=argparse.BooleanOptionalAction, default=False,
+         help="(Pt2) Stage2 后接 query-aware caption rewrite (需远程 vLLM + visual encoder + 图含 visual_clips).")
+     parser.add_argument('--visual_server_url', type=str,
+-        default=os.environ.get('VISUAL_SERVER_URL', 'http://10.0.0.3:9090'),
+-        help="(Pt2) 远程 visual encoder server URL")
++        default=os.environ.get('VISUAL_SERVER_URL'),
++        help="视觉检索的 query encoder URL；须与索引模型一致。未设置则加载本地 encoder。")
+     parser.add_argument('--vlm_rewrite_base_url', type=str,
+         default=os.environ.get('VLLM_BASE_URL', 'http://10.0.0.3:8000/v1'),
+         help="(Pt2) 远程 VLM (rewrite caption 用), OpenAI-compatible")
+@@ -1482,6 +1487,16 @@ def main():
+                         help="答题 prompt 加入身份消歧(JAKE=camera-wearer, who题答他人外貌); 默认关闭=原行为")
+     args = parser.parse_args()
+ 
++    # Preserve upstream native-library import order only for the full runtime.
++    import torch
++    try:
++        import nano_vectordb
++    except Exception as error:
++        logger.warning('pre-import nano_vectordb failed: %s', error)
++    from videorag._utils import always_get_an_event_loop
++    from hypervideo.hyper_video_graph import HyperVideoGraph
++    from hypervideo.config import HyperVideoConfig
++
+     # 应用身份消歧开关到模块级 (答题 prompt 选择 _stage1/2_prompt 时读取)
+     global USE_IDENTITY_DISAMBIG
+     USE_IDENTITY_DISAMBIG = bool(args.identity_disambig)
+@@ -1580,6 +1595,8 @@ def main():
+                     visual_index_path=args.visual_index_path,
+                     score_prop=args.score_prop,
+                     use_visual_channel=args.use_visual_channel,
++                    visual_server_url=args.visual_server_url,
++                    visual_min_score=args.visual_cosine_threshold,
+                     use_skills=args.use_skills,
+                     enable_visual_rewrite=args.enable_visual_rewrite,
+                     visual_rewrite_cfg=visual_rewrite_cfg,
 diff --git a/hypervideo/modules/character_identity.py b/hypervideo/modules/character_identity.py
 new file mode 100644
 index 0000000..001f90e
@@ -310,6 +735,311 @@ index 0000000..001f90e
 +            facts.extend(facts_from_response(json.loads(text), episode, topic.topic_id))
 +        return SimpleNamespace(facts=facts, roles={f.fact_id: 'core' for f in facts},
 +                               weights={f.fact_id: 1. for f in facts}, extraction_confidence=1.)
+diff --git a/hypervideo/retrieval/hierarchical_retriever.py b/hypervideo/retrieval/hierarchical_retriever.py
+index fd576d3..1ffd064 100644
+--- a/hypervideo/retrieval/hierarchical_retriever.py
++++ b/hypervideo/retrieval/hierarchical_retriever.py
+@@ -6,12 +6,13 @@
+ 
+ import logging
+ from dataclasses import dataclass, field
+-from typing import Dict, List, Optional, Set, Tuple
++from typing import Dict, List, Optional, Set, Tuple, TYPE_CHECKING
+ 
+ from ..config import HyperVideoConfig
+ from ..types import parse_frame_time_to_seconds
+ from ..structure import VideoHypergraph, VideoFactNode, VideoEpisodeNode, VideoTopicNode
+-from ..index.dual_index import DualIndex
++if TYPE_CHECKING:
++    from ..index.dual_index import DualIndex
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -22,9 +23,12 @@ class RetrievalResult:
+     topics: List[Tuple[str, float]] = field(default_factory=list)     # [(topic_id, score)]
+     episodes: List[Tuple[str, float]] = field(default_factory=list)   # [(episode_id, score)]
+     facts: List[Tuple[str, float]] = field(default_factory=list)      # [(fact_id, score)]
++    visual_clips: List[Tuple[str, float]] = field(default_factory=list)
++    evidence: List[dict] = field(default_factory=list)  # one ordered, typed top-k list
++    debug: List[str] = field(default_factory=list)
+ 
+     def has_results(self) -> bool:
+-        return bool(self.facts or self.episodes or self.topics)
++        return bool(self.evidence or self.visual_clips or self.facts or self.episodes or self.topics)
+ 
+     @property
+     def fact_count(self) -> int:
+@@ -48,12 +52,15 @@ class HierarchicalRetriever:
+     def __init__(
+         self,
+         hypergraph: VideoHypergraph,
+-        dual_index: DualIndex,
++        dual_index: "DualIndex",
+         config: Optional[HyperVideoConfig] = None,
++        visual_retriever=None,
+     ):
+         self._hypergraph = hypergraph
+         self._dual_index = dual_index
+         self._config = config or HyperVideoConfig()
++        self._visual_retriever = visual_retriever
++        self._visual_cache = None
+ 
+     async def retrieve(
+         self,
+@@ -77,6 +84,8 @@ class HierarchicalRetriever:
+         Returns:
+             RetrievalResult 包含 topics/episodes/facts
+         """
++        if self._config.use_visual_channel:
++            return await self._retrieve_multimodal(query, current_time_span, mode, bm25_query)
+         result = RetrievalResult()
+ 
+         # 冷启动：超图为空
+@@ -204,6 +213,60 @@ class HierarchicalRetriever:
+         )
+         return result
+ 
++    def _get_visual_retriever(self):
++        if self._visual_retriever is not None:
++            return self._visual_retriever
++        import os
++        path = self._config.visual_index_path
++        if not path or not os.path.isfile(path):
++            raise ValueError('use_visual_channel requires visual_index_path or an injected retriever')
++        stat = os.stat(path)
++        key = (os.path.realpath(path), stat.st_mtime_ns, stat.st_size,
++               self._config.visual_server_url, self._config.visual_embedding_device)
++        if self._visual_cache is None or self._visual_cache[0] != key:
++            from ..visual_retriever import VisualRetriever
++            self._visual_cache = (key, VisualRetriever(path, device=self._config.visual_embedding_device,
++                                                       remote_url=self._config.visual_server_url))
++        return self._visual_cache[1]
++
++    async def _retrieve_multimodal(self, query, current_time_span, mode, bm25_query):
++        from .multimodal import retrieve_leaves, clip_record
++        if mode not in ('hierarchical', 'episode_fact', 'fact_only'):
++            raise ValueError('unsupported multimodal retrieval mode')
++        hg = self._hypergraph
++        cutoff = parse_frame_time_to_seconds(current_time_span, 'end') if current_time_span else None
++        allowed = {eid for eid, ep in hg.episodes.items() if cutoff is None or ep.end_seconds <= cutoff}
++        topics, episodes = [], []
++        candidates = set(allowed)
++        if mode == 'hierarchical' and hg.topics:
++            topics = await self._dual_index.search(query, 'topic', self._config.topic_top_k)
++            scoped = set()
++            for tid, _ in topics:
++                if tid in hg.topics:
++                    scoped.update(hg.topics[tid].episode_ids)
++            scoped.update(self._expand_topics_to_episodes({tid for tid, _ in topics}))
++            candidates = (scoped & allowed) or allowed
++        if mode != 'fact_only' and candidates:
++            episodes = await self._dual_index.search_within(query, candidates, 'episode',
++                                                            self._config.episode_top_k)
++            episodes = [(eid, score) for eid, score in episodes if eid in candidates]
++        selected = {eid for eid, _ in episodes} or candidates
++        has_clips = any(n.parent_episode_id in selected and (cutoff is None or
++            clip_record(n, hg.episodes[n.parent_episode_id])['end_seconds'] <= cutoff)
++            for n in hg.visual_clips.values())
++        vr = self._get_visual_retriever() if has_clips else None
++        # A multi-episode fact must not expose content from a future episode.
++        facts = {fid for fid, node in hg.facts.items()
++                 if cutoff is None or all(eid in allowed for eid in node.episode_ids)}
++        evidence, parents, debug = await retrieve_leaves(hg, self._dual_index, query, episodes, topics,
++            top_k=self._config.fact_top_k, allowed_episode_ids=candidates, allowed_fact_ids=facts,
++            visual_retriever=vr, score_prop=self._config.retrieval_score_propagation,
++            min_visual_score=self._config.visual_min_score, bm25_query=bm25_query, cutoff_seconds=cutoff)
++        return RetrievalResult(topics=topics, episodes=episodes or [(p['id'], 0.) for p in parents],
++            facts=[(r['id'], r['score']) for r in evidence if r['node_type'] == 'fact'],
++            visual_clips=[(r['id'], r['score']) for r in evidence if r['node_type'] == 'visual_clip'],
++            evidence=evidence, debug=debug)
++
+     def _filter_facts_by_time(self, fact_ids: Set[str], cutoff_sec: float) -> Set[str]:
+         """fact_only 模式专用: 通过 fact 关联的 episode 做时间过滤。
+         如果 fact 没绑定 episode 或所有 episode 都已过 cutoff, 则丢弃。
+@@ -261,8 +324,12 @@ class HierarchicalRetriever:
+         """
+         parts = []
+ 
+-        # Facts（最细粒度，最有价值）
+-        if result.facts:
++        if result.evidence:
++            from .multimodal import format_evidence
++            parts.append("=== Retrieved Evidence (facts and visual clips) ===")
++            parts.append(format_evidence(result.evidence[:max_facts]))
++        # Backward-compatible formatting for text-only callers.
++        elif result.facts:
+             parts.append("=== Retrieved Facts ===")
+             for i, (fid, score) in enumerate(result.facts[:max_facts]):
+                 fact_node = self._hypergraph.get_fact(fid)
+diff --git a/hypervideo/retrieval/multimodal.py b/hypervideo/retrieval/multimodal.py
+new file mode 100644
+index 0000000..0a0fdae
+--- /dev/null
++++ b/hypervideo/retrieval/multimodal.py
+@@ -0,0 +1,163 @@
++"""Shared leaf retrieval: facts and visual clips retain their type and provenance."""
++from __future__ import annotations
++
++import asyncio
++import math
++from ..visual_retriever import clip_id
++from ..score_propagation import normalize_scores, propagate_mult, propagate_additive, propagate_rrf
++
++
++def clip_record(node, episode):
++    start, end = node.start_seconds, node.end_seconds
++    # Older visual_indexing versions wrote seconds-in-day despite the schema.
++    if 0 <= start < 86400 and 0 < end <= 86400 and episode.start_seconds >= node.day*86400:
++        start, end = start+node.day*86400, end+node.day*86400
++    if (node.day != episode.day or not math.isfinite(start) or not math.isfinite(end)
++            or not start < end or end <= episode.start_seconds or start >= episode.end_seconds):
++        raise ValueError('visual clip time/day does not overlap its parent episode')
++    return dict(id=node.id, node_type='visual_clip', clip_id=node.id,
++                episode_ids=[node.parent_episode_id], parent_episode_id=node.parent_episode_id,
++                day=node.day, start_seconds=start, end_seconds=end,
++                temporal=node.frame_time_span, frame_time_span=node.frame_time_span,
++                caption_text=node.caption_text, content=node.caption_text)
++
++
++def episode_clip_records(hg, episode_ids):
++    records = {}
++    for eid in sorted(episode_ids):
++        ep = hg.episodes[eid]
++        if ep.window_hyperedge_id:
++            edge = hg.episode_window_hyperedges.get(ep.window_hyperedge_id)
++            if edge is None or edge.episode_id != eid:
++                raise ValueError('invalid episode-to-window hyperedge')
++            ids = edge.relation.keys()
++        else:
++            # Imported graphs may carry only the reverse parent link.
++            ids = [cid for cid, node in hg.visual_clips.items() if node.parent_episode_id == eid]
++        for cid in ids:
++            node = hg.visual_clips.get(cid)
++            if node is None or node.parent_episode_id != eid:
++                raise ValueError('window hyperedge references a missing clip or a different parent')
++            records[cid] = clip_record(node, ep)
++    return records
++
++
++def rank_evidence(records, episode_hits, topic_hits, episode_to_topic, top_k, score_prop='none'):
++    """Merge channel ranks; cosine and text RRF scores are not directly comparable.
++
++    Equal channel weights, shared top-k budget, deterministic ties. This is rank
++    calibration of disjoint node types, not corroboration by two independent ranks.
++    """
++    if score_prop not in ('none', 'mult', 'additive', 'rrf'):
++        raise ValueError('invalid score propagation mode')
++    scores = {(r['node_type'], r['id']): 1/(60+r['channel_rank']) for r in records}
++    ep_scores, topic_scores = dict(episode_hits), dict(topic_hits)
++    parents = {(r['node_type'], r['id']): max(r['episode_ids'],
++               key=lambda eid: (ep_scores.get(eid, 0), eid), default='') for r in records}
++    if score_prop in ('mult', 'additive'):
++        func = propagate_mult if score_prop == 'mult' else propagate_additive
++        # Rank scores on a common scale; per-channel raw magnitudes never mix.
++        scores = func({key: value*60 for key, value in scores.items()}, parents,
++                      normalize_scores(ep_scores), episode_to_topic, normalize_scores(topic_scores))
++    elif score_prop == 'rrf':
++        scores = propagate_rrf({(r['node_type'], r['id']): r['channel_rank'] for r in records},
++                    parents, {key: i for i, (key, _) in enumerate(episode_hits)}, episode_to_topic,
++                    {key: i for i, (key, _) in enumerate(topic_hits)})
++    for row in records:
++        row['score'] = scores[(row['node_type'], row['id'])]
++    return sorted(records, key=lambda r: (-r['score'], r['channel_rank'], r['node_type'], r['id']))[:top_k]
++
++
++async def retrieve_leaves(hg, dual, query, episode_hits, topic_hits, *, top_k,
++                          allowed_episode_ids, allowed_fact_ids=None, visual_retriever=None,
++                          use_visual_channel=True, score_prop='none', min_visual_score=None,
++                          bm25_query=None, cutoff_seconds=None):
++    """Filter graph scope before scoring. A visual hit never requires a fact hit."""
++    if top_k < 1:
++        raise ValueError('top_k must be positive')
++    allowed_episode_ids = set(allowed_episode_ids) & hg.episodes.keys()
++    episode_hits = [(eid, score) for eid, score in episode_hits if eid in allowed_episode_ids]
++    selected = {eid for eid, _ in episode_hits} or allowed_episode_ids
++    episode_to_topic = {}
++    for tid, _ in sorted(topic_hits, key=lambda pair: (-pair[1], pair[0])):
++        topic = hg.topics.get(tid)
++        if topic:
++            for eid in topic.episode_ids:
++                episode_to_topic.setdefault(eid, tid)
++    fact_parents = {}
++    for fid, node in hg.facts.items():
++        if allowed_fact_ids is not None and fid not in allowed_fact_ids:
++            continue
++        parents = set(node.episode_ids) & selected
++        if parents:
++            fact_parents[fid] = sorted(parents)
++    for eid in selected:
++        edge = hg.get_fact_hyperedge_for_episode(eid)
++        if edge:
++            for fid in edge.relation:
++                if fid in hg.facts and (allowed_fact_ids is None or fid in allowed_fact_ids):
++                    fact_parents.setdefault(fid, [])
++                    if eid not in fact_parents[fid]:
++                        fact_parents[fid].append(eid)
++    records, debug = [], [f'leaf_episodes={len(selected)} fact_candidates={len(fact_parents)}']
++    if fact_parents:
++        kwargs = {'bm25_query': bm25_query} if bm25_query is not None else {}
++        hits = await dual.search_within(query, set(fact_parents), 'fact', top_n=top_k*2, **kwargs)
++        seen = set()
++        for rank, (fid, score) in enumerate(hits):
++            if fid not in fact_parents or fid in seen or not math.isfinite(score):
++                raise ValueError('invalid fact index hit')
++            seen.add(fid)
++            row = hg.facts[fid].model_dump(mode='json')
++            row.update(id=fid, node_type='fact', fact_id=fid, episode_ids=sorted(fact_parents[fid]),
++                       source_episode_ids=list(hg.facts[fid].episode_ids),
++                       raw_score=float(score), channel_rank=rank)
++            records.append(row)
++    if use_visual_channel:
++        candidates = episode_clip_records(hg, selected)
++        if cutoff_seconds is not None:
++            candidates = {cid: row for cid, row in candidates.items() if row['end_seconds'] <= cutoff_seconds}
++        debug.append(f'visual_candidates={len(candidates)}')
++        if candidates:
++            if visual_retriever is None:
++                raise ValueError('visual channel enabled but no visual index/retriever configured')
++            days = sorted({row['day'] for row in candidates.values()})
++            hits = await asyncio.to_thread(visual_retriever.search_within, query, set(candidates),
++                                           top_k=top_k*2, days=days, min_score=min_visual_score)
++            seen = set()
++            for rank, (_, score, meta) in enumerate(hits):
++                cid = clip_id(meta)
++                if cid not in candidates or cid in seen or not math.isfinite(score):
++                    raise ValueError('invalid visual index hit')
++                seen.add(cid)
++                row = candidates[cid]
++                parent = meta.get('episode_id') or meta.get('parent_episode_id')
++                if parent != row['parent_episode_id'] or int(meta['day']) != row['day']:
++                    raise ValueError('visual index metadata does not match graph clip/parent')
++                dim = hg.visual_clips[cid].visual_embedding_dim
++                if dim and dim != visual_retriever.dim:
++                    raise ValueError('graph clip embedding dimension does not match index')
++                for key, absolute in [('start_sec_in_day', 'start_seconds'), ('end_sec_in_day', 'end_seconds')]:
++                    if key in meta and abs(meta[key]+row['day']*86400-row[absolute]) > 1e-4:
++                        raise ValueError('visual index time range does not match graph clip')
++                row.update(raw_score=float(score), channel_rank=rank)
++                records.append(row)
++        else:
++            debug.append('visual channel has no clips in selected episodes')
++    evidence = rank_evidence(records, episode_hits, topic_hits, episode_to_topic, top_k, score_prop)
++    parent_ids = list(dict.fromkeys(eid for row in evidence for eid in row['episode_ids']))
++    parents = [hg.episodes[eid].model_dump(mode='json') for eid in parent_ids]
++    debug.append(f"returned_facts={sum(r['node_type']=='fact' for r in evidence)} "
++                 f"returned_visual_clips={sum(r['node_type']=='visual_clip' for r in evidence)}")
++    return evidence, parents, debug
++
++
++def format_evidence(records, max_chars=400):
++    lines = []
++    for row in records:
++        kind = row.get('node_type', 'fact')
++        content = row.get('content') or row.get('caption_text') or '(no stored caption; inspect the clip)'
++        location = row.get('frame_time_span') or row.get('temporal') or ''
++        parents = ','.join(row.get('episode_ids', []))
++        lines.append(f"[{kind}:{row.get('id', '')}] [{location}] [episodes={parents}] {content[:max_chars]}")
++    return '\n'.join(lines) if lines else '(no evidence retrieved)'
 diff --git a/hypervideo/structure.py b/hypervideo/structure.py
 index ebd7c93..af61096 100644
 --- a/hypervideo/structure.py
@@ -410,3 +1140,305 @@ index e95e6d0..4dfd8e3 100644
              "content": self.content,
              "episode_ids": self.episode_ids,
              "topic_id": self.topic_id,
+diff --git a/hypervideo/visual_indexing.py b/hypervideo/visual_indexing.py
+index 2753da5..9925083 100644
+--- a/hypervideo/visual_indexing.py
++++ b/hypervideo/visual_indexing.py
+@@ -502,8 +502,8 @@ def build_visual_index(
+                 new_visual_clips[clip_uuid] = {
+                     'id': clip_uuid,
+                     'day': day,
+-                    'start_seconds': float(seg_start),
+-                    'end_seconds': float(seg_end),
++                    'start_seconds': float(day*86400 + seg_start),
++                    'end_seconds': float(day*86400 + seg_end),
+                     'frame_time_span': matched_ts,
+                     'caption_text': matched_caption,
+                     'parent_episode_id': eid,
+@@ -783,7 +783,7 @@ def build_visual_index_clip_level(
+             if write_to_hypergraph:
+                 new_visual_clips[clip_uuid] = {
+                     'id': clip_uuid, 'day': day,
+-                    'start_seconds': float(ws), 'end_seconds': float(we),
++                    'start_seconds': float(day*86400 + ws), 'end_seconds': float(day*86400 + we),
+                     'frame_time_span': win_ts,
+                     'caption_text': '',  # 后续可注入对应 frame_caption
+                     'parent_episode_id': matched_eid,
+@@ -1045,8 +1045,8 @@ def build_visual_index_aligned_to_frame_captions(
+             if write_to_hypergraph:
+                 new_visual_clips[clip_uuid] = {
+                     'id': clip_uuid, 'day': d,
+-                    'start_seconds': float(win_start),
+-                    'end_seconds': float(win_end),
++                    'start_seconds': float(d*86400 + win_start),
++                    'end_seconds': float(d*86400 + win_end),
+                     'frame_time_span': wts,  # 用 window_time_span 填进 frame_time_span 字段 (兼容现有 visual_clip schema)
+                     'caption_text': _full_caption,  # 6 帧逐帧 + 30s description
+                     'parent_episode_id': eid,
+diff --git a/hypervideo/visual_rerank_stage.py b/hypervideo/visual_rerank_stage.py
+index 3bcb891..045329d 100644
+--- a/hypervideo/visual_rerank_stage.py
++++ b/hypervideo/visual_rerank_stage.py
+@@ -22,7 +22,7 @@ import logging
+ import os
+ import re
+ import shutil
+-from typing import Any, Dict, List, Optional, Tuple
++from typing import Set, Any, Dict, List, Optional, Tuple
+ 
+ import numpy as np
+ 
+@@ -174,6 +174,7 @@ async def query_aware_visual_rerank(
+     vlm_model: str = "Qwen3-VL-8B-Instruct",
+     video_root: str = "${DATA_ROOT}/EgoLife/egolife",
+     user_id: str = "A1_JAKE",
++    candidate_clip_ids: Optional[Set[str]] = None,
+ ) -> List[Dict[str, Any]]:
+     """对 candidate_episodes 关联的 visual_clip 做 query-aware cosine rerank.
+ 
+@@ -209,6 +210,8 @@ async def query_aware_visual_rerank(
+             continue
+         he = hg.episode_window_hyperedges[wh_id]
+         for cid in he.relation.keys():
++            if candidate_clip_ids is not None and cid not in candidate_clip_ids:
++                continue
+             cnode = hg.visual_clips.get(cid)
+             if cnode is None:
+                 continue
+@@ -235,7 +238,7 @@ async def query_aware_visual_rerank(
+         embs, meta_list, _backbone, _dim = load_visual_index(visual_index_npz)
+         id_to_idx: Dict[str, int] = {}
+         for i, m in enumerate(meta_list):
+-            key = m.get("id") or m.get("clip_id")
++            key = m.get("id") or m.get("visual_clip_id") or m.get("clip_id")
+             if key:
+                 id_to_idx[key] = i
+     except Exception as e:
+@@ -319,6 +322,9 @@ async def query_aware_visual_rerank(
+             day = meta.get("day")
+             ws = int(round(meta.get("start_seconds", 0)))
+             we = int(round(meta.get("end_seconds", 0)))
++            if day is not None and ws >= int(day)*86400:
++                ws -= int(day)*86400
++                we -= int(day)*86400
+             # 找 clip 文件 + 重采 6 帧 (中心时刻, 跟 build 时一致)
+             try:
+                 from hypervideo.visual_indexing import (
+diff --git a/hypervideo/visual_retriever.py b/hypervideo/visual_retriever.py
+index a41ee5b..a5a0438 100644
+--- a/hypervideo/visual_retriever.py
++++ b/hypervideo/visual_retriever.py
+@@ -1,133 +1,107 @@
+-"""Visual retrieval 模块: 用 visual_index.npz 做 query 时检索.
+-
+-Query → text → encoder.encode_text → cosine 与 visual segments → top-K
+-→ 收集 parent_episode_id → 把这些 episode 的 caption 当作"视觉证据"喂 LLM
+-
+-集成方式:
+-  retrieval_v2 在 Stage 2 检索时, 如果开 --enable_visual, 把 visual_top_k
+-  也加入候选集 (与 BM25/embedding 用 RRF 融合).
+-
+-参考 MAGIC 不去重策略 + 我们的 day-scoped 过滤.
+-"""
++"""Query-to-clip cosine retrieval with candidate filtering before top-k selection."""
+ from __future__ import annotations
+ 
+-import json
+ import logging
+-import os
+ from typing import Dict, List, Optional, Set, Tuple
+-
+ import numpy as np
+ 
+ logger = logging.getLogger(__name__)
+ 
+ 
+-class VisualRetriever:
+-    """Visual segment 检索器. 单例, 复用 encoder + embedding matrix."""
++def clip_id(meta):
++    ids = {meta[key] for key in ('id', 'visual_clip_id', 'clip_id') if meta.get(key)}
++    if len(ids) != 1:
++        raise ValueError('visual index row needs one unambiguous clip ID')
++    return ids.pop()
++
+ 
+-    def __init__(self, visual_index_path: str, device: str = "cuda"):
+-        from hypervideo.visual_indexing import load_visual_index, VLM2VecEncoder
++class VisualRetriever:
++    """An index and its matching query encoder. Encoder loading is lazy.
++
++    `encoder` injection supports an already deployed service and CPU contract tests.
++    Encoding/index failures propagate; an unavailable channel is not an empty hit set.
++    """
++    def __init__(self, visual_index_path: str, device: str = 'cuda', *,
++                 remote_url: Optional[str] = None, encoder=None):
++        from hypervideo.visual_indexing import load_visual_index
+         self.embeddings, self.meta, self.backbone, self.dim = load_visual_index(visual_index_path)
+-        # 归一化 embedding 矩阵供 cosine 用
+-        norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True) + 1e-8
++        self.embeddings = np.asarray(self.embeddings, dtype=np.float32)
++        if self.embeddings.shape != (len(self.meta), self.dim) or self.dim < 1:
++            raise ValueError('visual index shape/metadata mismatch')
++        norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True)
++        if not np.isfinite(self.embeddings).all() or not np.isfinite(norms).all() or (norms <= 0).any():
++            raise ValueError('visual index contains nonfinite or zero vectors')
+         self.embeddings_norm = self.embeddings / norms
+-        # 按 day 分桶
+-        self.day_to_idx: Dict[int, List[int]] = {}
+-        for i, m in enumerate(self.meta):
+-            self.day_to_idx.setdefault(m['day'], []).append(i)
+-        logger.info(
+-            f"VisualRetriever: {len(self.meta)} segments, backbone={self.backbone}, "
+-            f"dim={self.dim}, days={dict((d, len(v)) for d, v in self.day_to_idx.items())}"
+-        )
+-
+-        # 复用同一 encoder 编码 query
+-        self.encoder = VLM2VecEncoder(
+-            prefer_vlm2vec=(self.backbone == 'vlm2vec'),
+-            device=device,
+-        )
+-
+-    def search(
+-        self,
+-        query: str,
+-        days: Optional[List[int]] = None,
+-        top_k: int = 12,
+-    ) -> List[Tuple[int, float, dict]]:
+-        """文本 query → top-K visual segments.
+-
+-        Args:
+-            query: 文本查询
+-            days: 限定查询哪些 day, None=全 days
+-            top_k: 返回前 K 个
+-
+-        Returns:
+-            [(seg_idx, score, meta), ...] 按 cosine 降序.
+-        """
+-        # 候选 idx
+-        if days:
+-            cand = []
+-            for d in days:
+-                cand.extend(self.day_to_idx.get(d, []))
+-            if not cand:
+-                return []
+-        else:
+-            cand = list(range(len(self.meta)))
+-
+-        # 编码 query
+-        try:
+-            q = self.encoder.encode_text(query)
+-        except Exception as e:
+-            logger.warning(f"visual encode_text failed: {e}")
++        self.id_to_idx, self.day_to_idx = {}, {}
++        for i, meta in enumerate(self.meta):
++            key = clip_id(meta)
++            if key in self.id_to_idx:
++                raise ValueError('duplicate visual clip in index')
++            self.id_to_idx[key] = i
++            self.day_to_idx.setdefault(int(meta['day']), []).append(i)
++        self.device, self.remote_url, self.encoder = device, remote_url, encoder
++
++    def _query_encoder(self):
++        if self.encoder is None:
++            from hypervideo.visual_indexing import RemoteVisualEncoder, VLM2VecEncoder
++            if self.remote_url:
++                self.encoder = RemoteVisualEncoder(self.remote_url)
++            else:
++                if self.backbone not in ('vlm2vec', 'siglip'):
++                    raise ValueError('this visual backbone requires a matching remote query encoder')
++                self.encoder = VLM2VecEncoder(prefer_vlm2vec=self.backbone == 'vlm2vec', device=self.device)
++        if self.encoder.backbone != self.backbone or self.encoder.dim != self.dim:
++            raise ValueError('visual query encoder backbone/dimension does not match the index')
++        return self.encoder
++
++    def search(self, query: str, days: Optional[List[int]] = None, top_k: int = 12,
++               *, candidate_ids: Optional[Set[str]] = None,
++               min_score: Optional[float] = None) -> List[Tuple[int, float, dict]]:
++        if top_k < 0:
++            raise ValueError('top_k must be nonnegative')
++        if min_score is not None and not -1 <= min_score <= 1:
++            raise ValueError('cosine threshold must be in [-1, 1]')
++        if candidate_ids is not None and set(candidate_ids) - self.id_to_idx.keys():
++            raise ValueError('visual index is missing candidate clip IDs; rebuild the paired graph/index')
++        if top_k == 0:
+             return []
+-        q = q / (np.linalg.norm(q) + 1e-8)
+-
+-        # 仅在 cand 上算 cosine
+-        cand_arr = np.array(cand)
+-        sub_emb = self.embeddings_norm[cand_arr]
+-        sims = sub_emb @ q  # (len(cand),)
+-        # 取 top-K
+-        if top_k >= len(sims):
+-            order = np.argsort(-sims)
+-        else:
+-            top_idx = np.argpartition(-sims, top_k - 1)[:top_k]
+-            order = top_idx[np.argsort(-sims[top_idx])]
+-
+-        results = []
+-        for local_i in order[:top_k]:
+-            global_i = cand[local_i]
+-            results.append((int(global_i), float(sims[local_i]), self.meta[global_i]))
+-        return results
++        day_set = set(days) if days is not None else None
++        candidates = [i for key, i in self.id_to_idx.items()
++                      if (candidate_ids is None or key in candidate_ids)
++                      and (day_set is None or int(self.meta[i]['day']) in day_set)]
++        if not candidates:
++            return []
++        q = np.asarray(self._query_encoder().encode_text(query), dtype=np.float32)
++        norm = np.linalg.norm(q)
++        if q.shape != (self.dim,) or not np.isfinite(q).all() or not np.isfinite(norm) or norm <= 0:
++            raise ValueError('invalid visual query embedding')
++        scores = self.embeddings_norm[candidates] @ (q/norm)
++        hits = [(i, float(np.clip(score, -1, 1)), self.meta[i]) for i, score in zip(candidates, scores)
++                if min_score is None or score >= min_score]
++        return sorted(hits, key=lambda row: (-row[1], clip_id(row[2])))[:top_k]
+ 
+-    def get_episode_ids(self, search_results: List[Tuple[int, float, dict]]) -> List[str]:
+-        """从 visual search 结果取出 parent episode ids (去重保序)."""
+-        seen, out = set(), []
+-        for _, _, meta in search_results:
+-            eid = meta.get('episode_id')
+-            if eid and eid not in seen:
+-                seen.add(eid)
+-                out.append(eid)
+-        return out
++    def search_within(self, query, candidate_ids, top_k=12, *, days=None, min_score=None):
++        return self.search(query, days=days, top_k=top_k,
++                           candidate_ids=set(candidate_ids), min_score=min_score)
+ 
++    def get_episode_ids(self, search_results):
++        return list(dict.fromkeys(m.get('episode_id') or m.get('parent_episode_id')
++                    for _, _, m in search_results if m.get('episode_id') or m.get('parent_episode_id')))
+ 
+-# =============================================================================
+-# CLI 测试
+-# =============================================================================
+ 
+ def _cli_test():
+-    """python -m hypervideo.visual_retriever --index /path --query 'red dress'"""
+     import argparse
+     ap = argparse.ArgumentParser()
+     ap.add_argument('--index', required=True)
+     ap.add_argument('--query', required=True)
+-    ap.add_argument('--days', default='', help='过滤 day, e.g. "1,2"')
++    ap.add_argument('--days', default='')
+     ap.add_argument('--top_k', type=int, default=10)
++    ap.add_argument('--server', default=None)
+     args = ap.parse_args()
+-
+-    days = [int(d) for d in args.days.split(',') if d.strip()] if args.days else None
+-    vr = VisualRetriever(args.index)
+-    results = vr.search(args.query, days=days, top_k=args.top_k)
+-    for rank, (idx, score, m) in enumerate(results, 1):
+-        print(f"  #{rank} score={score:.3f} day{m['day']} "
+-              f"[{m['start_sec_in_day']:.0f}-{m['end_sec_in_day']:.0f}s] "
+-              f"ep={m['episode_id'][:8]}")
++    days = [int(d) for d in args.days.split(',')] if args.days else None
++    vr = VisualRetriever(args.index, remote_url=args.server)
++    for _, score, meta in vr.search(args.query, days=days, top_k=args.top_k):
++        print(f'{clip_id(meta)} score={score:.4f} day={meta["day"]} episode={meta.get("episode_id")}')
+ 
+ 
+ if __name__ == '__main__':

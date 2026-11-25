@@ -15,6 +15,12 @@
 
 详细设计见 [实验设计](docs/DESIGN.md)，GPU/API 操作见 [运行手册](docs/RUNBOOK.md)，复用关系见 [代码来源](docs/PROVENANCE.md)，实际验证见 [测试记录](docs/VALIDATION.md)。
 
+## Visual clip 联合检索
+
+已补齐 Grove `use_visual_channel` 的 TODO，并接到 `hierarchical_v2_day` 和核心 `HierarchicalRetriever`。visual clip 与 fact 分别检索后共享一个 top-k 列表，保留各自类型、ID、时间、父 episode 和分数；没有 fact 的 episode 也可返回视觉证据。视觉编码可调用远程 API，本机只计算 cosine。
+
+开启配置见 [configs/visual_retrieval.json](configs/visual_retrieval.json)，运行方式与接口见 [视觉检索说明](docs/VISUAL_RETRIEVAL.md)。本机可运行 `.venv/bin/python scripts/smoke_visual.py runs/visual-smoke-new`；这是合成向量与测试用文本索引下的真实检索路径验证，不代表模型准确率。完整 Grove 环境仍需补齐上游缺少的文本索引/builder 文件。
+
 ## 当前离线流程与模型
 
 1. `speech`：对完整测试片段做语音分段和转录。分别运行 Gemini、faster-whisper large-v3 + pyannote community-1，或中文 FunASR（Paraformer-zh + FSMN-VAD + ct-punc + CAM++），不是依次串联三组模型。
