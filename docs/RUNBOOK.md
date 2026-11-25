@@ -23,7 +23,7 @@ pip install faster-whisper 'pyannote.audio>=4,<5'
 # 或独立环境：
 pip install funasr
 # face / voice 环境：
-pip install insightface onnxruntime-gpu opencv-python-headless torchaudio
+pip install insightface onnxruntime-gpu opencv-python-headless torchaudio 'hdbscan>=0.8.40,<0.9'
 # Omni 环境：
 pip install 'transformers>=4.51,<5' accelerate qwen-omni-utils
 ```
@@ -66,9 +66,9 @@ python -m lab perceive --video data/media/IS1009a_01.mp4 --speech runs/speech-lo
 python -m lab associate --bundle runs/perception-ep1/bundle.json --config configs/av_omni.json --accept-model-links --out runs/av-ep1
 ```
 
-`perceive` 产生裁剪视频、脸图、face/voice observations 和统一时间戳。首次 GPU 调通需检查人脸检测质量和声纹模型输出 shape。当前只做抽样人脸聚类，没有 lip-sync tracker。短于配置阈值/被前端标为 overlap 的语音不提声纹，但仍保留转录。
+`perceive` 产生裁剪视频、每簇最多 3 张脸图、face/voice observations 和统一时间戳，另存 `face_detections.json` 记录所有检测的分数、特征、时间和聚类标签。使用 M3 HDBSCAN 和两阶段质量筛选，默认 min_cluster_size=20；短 episode/短暂人物可能没有合格簇，不会自动退回阈值去重。首次 GPU 调通需检查人脸质量和声纹输出 shape。没有 lip-sync tracker。短于阈值/被前端标为 overlap 的语音不提声纹，但仍保留转录。
 
-`associate` 复用现有真实 AV 适配器；如果使用 Gemini AV 对照，可换 `configs/gemini.json`。后一 episode 用 `--prior runs/av-ep1/snapshot.json` 传入图快照；若需要自动历史重识别，在 AV 配置显式加 `reid_thresholds: {face: ..., voice: ...}` 和 `reid_margin`（先开发集校准）。默认不自动打开历史阈值匹配。
+`associate` 复用现有 AV 适配器；Gemini AV 对照可换 `configs/gemini.json`。后一 episode 用 `--prior runs/av-ep1/snapshot.json` 传入图快照。人脸按 M3 多代表特征平均相似度匹配，默认 0.3，匹配特征池上限 10；可由 perception 配置的 `img_matching_threshold` 或 AV 配置的 `reid_thresholds.face` 覆盖。声音历史匹配仍须在 AV 配置显式加 `reid_thresholds.voice` 和 `reid_margin`。以上阈值需真实数据验证。
 
 需要先隔离 AV 错误时，将人工校正轮次制成相同 speech result schema，注明其 oracle 来源，再提取 bundle。更换前端时应复制冻结的人脸 gallery/observations，只重做声音证据，避免人脸模型随机差异混入对比。当前没有批量冻脸 orchestration，需人工检查 bundle 的 face 部分一致。
 

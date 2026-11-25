@@ -33,11 +33,13 @@ WER/CER 按时间排序后连接全文，使用 NFKC、小写、去标点/符号
 
 先复用同一份 episode 划分与同一套 face gallery，使用人工校正的语音轮次测试关联能力；再换成各语音前端的预测轮次，测误差传递。必须冻结视觉证据，不能给某组额外人工修正人脸。
 
-- `perception.py` 实际适配 InsightFace buffalo_l 与 M3 使用的 ERes2NetV2/FBank；采用逐帧抽样及余弦聚类，不是连续 tracker，不是主动说话检测器，也不等同于 M3 的 HDBSCAN。第一轮所有组固定此实现。
+- `perception.py` 使用 InsightFace buffalo_l 与 M3 的 ERes2NetV2/FBank。人脸已替换为 M3 原始 HDBSCAN（函数原样保存在 lab/reused/m3_face_clustering.py）：5 FPS，聚类前检测分数 >=0.8、原始 embedding 范数 >=20，min_cluster_size=20；聚类后严格筛选检测分数 >0.85、范数 >22，丢弃 -1 噪声，按检测分数再质量分数排序，每簇最多 3 张。给 Omni 的是排序第一张，与 M3 的 face_only 路径相同。没有新增 tracker 或主动说话检测器。
 - 复用已有 AV 适配器：原视频片段 + 人脸参考图 + 带时间的 utterances → face_id 或 null。支持 Gemini 和本地 Qwen2.5-Omni；换 M3 微调权重时须单独标明，当前 association-only prompt 不是 M3 原始记忆任务 prompt，适配收益未知。
 - 关联预测输出必须覆盖全部 utterance，重复、漏项或虚构 face ID 均报错。无脸语音仍可通过历史声纹关联人物，不等于必须 unknown character。
 - `--accept-model-links` 是实验策略开关：允许模型预测成为图内 confirmed 边，不代表人工确认或真实正确。默认只记录 candidate，不合并 face/voice；两种策略可做精度/覆盖率对照。
-- 历史检索阈值默认不启用；需要显式配置 `reid_thresholds`，同模态、同模型空间比较，阈值与 margin 在开发集校准。脸与声音的 embedding 不直接计算相似度。
+- 人脸节点匹配按 M3 计算当前代表脸与节点特征的所有两两余弦相似度的平均，取 >=0.3 的最高者，无 voice 分支的 margin。每节点最多 10 个匹配特征，超过时随机采样；本实现加固定 seed 便于复现，完整观测仍保留在审计图。历史声音检索仍需要显式配置 `reid_thresholds.voice`，使用原有阈值和 margin。均限定相同模态、模型和维度，不直接比较脸与声音的 embedding。
+
+Grove 适配差异：聚类范围是给定 episode 而非 M3 固定 30 秒；局部 face_id 仍作为 AV 可审计引用，随后映射为全局人物，不复用 M3 的全局节点编号；裁剪框增加越界保护。少于 20 个合格检测时不会绕过 HDBSCAN 创建人脸身份，单簇/短暂人物可能被拒识。这些行为需要在真实数据中评测，不能声称整个 M3 流水线已等价复现。旧阈值去重版本只保留在 Git 历史，不维护第二套运行分支。
 
 指标使用共同 face gallery 下的时间积分 precision/recall/F1、画外音误绑定率；这些指标可比较不同预测轮次。关联人工真值须包含漏识别语音；不能只标预测正确输出部分。人物图另看跨 episode 重现、错误合并、错误拆分及拒识，用带人工 canonical person 的单元表评测；当前 CLI 没有自动人物聚类全套指标，需追加标注与分析，不能把 AV F1 当作人物图准确率。
 

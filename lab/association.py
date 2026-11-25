@@ -28,7 +28,7 @@ def resolve(bundle, predictions, prior=None, accept_links=False, match_threshold
         if o['source'] != source or not origin <= o['start'] <= o['end'] <= origin+bundle['duration']:
             raise ValueError('observation outside closed episode/source')
         graph.observe(o)
-        if match_threshold is not None:
+        if 'voice' in (match_threshold or {}) and o['modality'] == 'voice':
             ranked = graph.candidates(o['id'])
             # Compare different components; duplicate samples of a person are not competitors.
             mapping = {x: p['person_id'] for p in graph.people() for x in p['faces']+p['voices']}
@@ -45,6 +45,12 @@ def resolve(bundle, predictions, prior=None, accept_links=False, match_threshold
                     graph.propose(dict(id=link_id, left=o['id'], right=candidates[0]['observation_id'],
                                        method='embedding', evidence={'cosine': candidates[0]['cosine']}))
                     graph.review(link_id, 'confirmed', 'experiment-policy', 'threshold and margin')
+    from .faces import link_face_groups
+    face_config = bundle.get('config', {})
+    face_threshold = (match_threshold or {}).get('face', face_config.get('img_matching_threshold', .3))
+    link_face_groups(graph, list(faces.values()), threshold=face_threshold,
+                     max_embeddings=face_config.get('max_img_embeddings',10),
+                     seed=face_config.get('face_sampling_seed',0))
     obs = graph.data['observations']
     for f in faces.values():
         if f['observation_id'] not in obs or obs[f['observation_id']]['modality'] != 'face':

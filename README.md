@@ -19,9 +19,9 @@
 
 1. `speech`：对完整测试片段做语音分段和转录。分别运行 Gemini、faster-whisper large-v3 + pyannote community-1，或中文 FunASR（Paraformer-zh + FSMN-VAD + ct-punc + CAM++），不是依次串联三组模型。
 2. 提供固定 episode 时间范围：可以来自已有 Grove 结果，联调也可以人工指定；当前独立入口不会自动跑完整 Grove 动态分段。
-3. `perceive`：按 episode 裁剪音视频，用 InsightFace buffalo_l 检测/提取人脸特征并聚类，用 ERes2NetV2 提取每段合格语音的声纹。
+3. `perceive`：按 episode 裁剪音视频，用 InsightFace buffalo_l 按 5 FPS 提取人脸，执行 M3 原始 HDBSCAN、质量筛选及每簇最多 3 张代表脸选择；用 ERes2NetV2 提取每段合格语音的声纹。
 4. `associate`：按 `configs/av_omni.json` 使用 **Qwen2.5-Omni-7B**，输入带音轨视频、人脸参考图、发言时间与转录，预测每段发言对应的 face_id 或 null。这一步才是脸与声音的跨模态关联；也可切换 Gemini 作为对照。
-5. 人物图：保存关联候选；使用 `--accept-model-links` 才按实验策略确认 face/voice 边。历史身份重识别还需传入 `--prior` 并显式设置 `reid_thresholds`，在同模态内比较特征，不直接比较脸向量和声音向量。
+5. 人物图：按 M3 的多代表脸平均余弦相似度匹配人脸节点，默认阈值 0.3、每节点最多 10 个匹配特征；用 `--prior` 接入历史快照。face/voice 跨模态边仍需 `--accept-model-links` 才确认。历史声音重识别需显式配置 `reid_thresholds.voice`；不直接比较脸向量和声音向量。
 6. `grove-write`：将身份快照注入固定 episode，用配置的 writer 生成摘要与 facts，按其引用的 utterance_ids 写入 character_refs，并保存/重载 Grove 图。
 
 Omni 默认配置是基础 Qwen2.5-Omni-7B，**不是 M3-Agent 微调权重**。借鉴的是 M3 的处理分工；当前模型适配器尚未做真实 GPU 准确率验证。并行取证、动态边界后的实时等待属于完整接入目标，不能等同于当前离线命令已经完成实时调度。

@@ -11,6 +11,6 @@ missing=[p for p in ['hypervideo/extractors/fact_extractor.py','hypervideo/extra
                     'hypervideo/modules/audio_cues/diarization.py'] if not (grove/p).is_file()]
 print(json.dumps({'ffmpeg':shutil.which('ffmpeg'),'grove_checkout':grove.is_dir(),
                   'missing_upstream_files':missing,
-                  'test_dependencies':{p:importlib.util.find_spec(p) is not None for p in ['numpy','pydantic']},
+                  'test_dependencies':{p:importlib.util.find_spec(p) is not None for p in ['numpy','pydantic','hdbscan']},
                   'full_grove_pipeline_ready':False,
                   'note':'Full pipeline requires missing upstream modules and model/runtime verification.'},indent=2))

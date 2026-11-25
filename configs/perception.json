@@ -1,1 +1,23 @@
-{"face_model":"buffalo_l","face_model_id":"SET_FACE_WEIGHTS_SHA256","insightface_root":"/models/insightface","face_fps":2,"ctx_id":0,"providers":["CUDAExecutionProvider","CPUExecutionProvider"],"face_cluster_threshold":0.5,"face_cluster_margin":0.08,"max_face_references":24,"voice_model_id":"SET_ERES2NET_WEIGHTS_SHA256","voice_checkpoint":"/models/pretrained_eres2netv2.ckpt","min_voice_seconds":2,"device":"cuda"}
+{
+  "face_model": "buffalo_l",
+  "face_model_id": "SET_FACE_WEIGHTS_SHA256",
+  "insightface_root": "/models/insightface",
+  "face_fps": 5,
+  "ctx_id": 0,
+  "providers": [
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "max_face_references": 24,
+  "voice_model_id": "SET_ERES2NET_WEIGHTS_SHA256",
+  "voice_checkpoint": "/models/pretrained_eres2netv2.ckpt",
+  "min_voice_seconds": 2,
+  "device": "cuda",
+  "face_min_cluster_size": 20,
+  "face_detection_score_threshold": 0.85,
+  "face_quality_score_threshold": 22,
+  "max_faces_per_character": 3,
+  "img_matching_threshold": 0.3,
+  "max_img_embeddings": 10,
+  "face_sampling_seed": 0
+}

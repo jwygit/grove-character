@@ -44,39 +44,56 @@ def extract(video, speech, start, end, origin, source, episode_id, config, out):
                        providers=config.get('providers', ['CUDAExecutionProvider', 'CPUExecutionProvider']))
     app.prepare(ctx_id=config.get('ctx_id', 0), det_size=(640, 640))
     cap = cv2.VideoCapture(str(clip))
-    faces, observations, prototypes = [], [], []
+    from .faces import select_faces
+    from .common import write
+    detections, faces, observations = [], [], []
     try:
-        for t in np.arange(0, end-start, 1/config.get('face_fps', 2)):
+        for frame_id, t in enumerate(np.arange(0, end-start, 1/config.get('face_fps', 5))):
             cap.set(cv2.CAP_PROP_POS_MSEC, float(t)*1000)
             ok, frame = cap.read()
             if not ok:
                 continue
             for face in app.get(frame):
-                if float(face.det_score) < config.get('detection_threshold', 0.7):
-                    continue
-                v = face.normed_embedding
-                scores = sorted([(float(v @ p), i) for i, p in enumerate(prototypes)], reverse=True)
-                if scores and scores[0][0] >= config['face_cluster_threshold']:
-                    # This is sampled face clustering, not a tracker or active-speaker detector.
-                    if len(scores) == 1 or scores[0][0]-scores[1][0] >= config.get('face_cluster_margin', 0.08):
-                        continue
-                face_id = f'{episode_id}:f{len(faces):04d}'
                 x1, y1, x2, y2 = face.bbox.astype(int)
-                crop = frame[max(0,y1):min(frame.shape[0],y2), max(0,x1):min(frame.shape[1],x2)]
-                if not crop.size:
+                x1, y1 = max(0,int(x1)), max(0,int(y1))
+                x2, y2 = min(frame.shape[1],int(x2)), min(frame.shape[0],int(y2))
+                if x2 <= x1 or y2 <= y1:
                     continue
-                image = out/f'face_{len(faces):04d}.jpg'
-                if not cv2.imwrite(str(image), crop):
-                    raise RuntimeError('face crop write failed')
-                faces.append(dict(id=face_id, observation_id=face_id, image=str(image.resolve())))
-                prototypes.append(v)
-                observations.append(dict(id=face_id, modality='face', source=source,
-                    start=origin+start+float(t), end=origin+start+float(t),
-                    model=config['face_model_id'], embedding=v.tolist()))
+                ok, jpeg = cv2.imencode('.jpg', frame[y1:y2,x1:x2])
+                if not ok:
+                    continue
+                aspect = (y2-y1)/(x2-x1)
+                detections.append(dict(frame_id=frame_id, timestamp=float(t),
+                    bounding_box=[x1,y1,x2,y2], face_emb=face.normed_embedding.tolist(),
+                    cluster_id=-1, crop_jpeg=jpeg.tobytes(), extra_data={
+                        'face_type':'ortho' if 1 < aspect < 1.5 else 'side',
+                        'face_detection_score':float(face.det_score),
+                        'face_quality_score':float(np.linalg.norm(face.embedding,ord=2))}))
     finally:
         cap.release()
+    labeled, groups = select_faces(detections, config)
+    write(out/'face_detections.json', [dict(
+        {k:v for k,v in row.items() if k != 'crop_jpeg'}, cluster_id=int(row['cluster_id']))
+        for row in labeled])
+    for cluster_id, representatives in groups.items():
+        face_id = f'{episode_id}:f{cluster_id:04d}'
+        ids, images = [], []
+        for rank, row in enumerate(representatives):
+            obs_id = f'{face_id}:r{rank}'
+            image = out/f'face_{cluster_id:04d}_{rank}.jpg'
+            image.write_bytes(row['crop_jpeg'])
+            ids.append(obs_id)
+            images.append(str(image.resolve()))
+            observations.append(dict(id=obs_id, modality='face', source=source,
+                start=origin+start+row['timestamp'], end=origin+start+row['timestamp'],
+                model=config['face_model_id'], embedding=row['face_emb'],
+                detection_score=row['extra_data']['face_detection_score'],
+                quality_score=row['extra_data']['face_quality_score'],
+                frame_id=row['frame_id'], bounding_box=row['bounding_box'], cluster_id=cluster_id))
+        faces.append(dict(id=face_id, observation_id=ids[0], observation_ids=ids,
+                          image=images[0], images=images))
     if len(faces) > config.get('max_face_references', 24):
-        raise ValueError('too many face references; review clustering or shorten common episodes')
+        raise ValueError('too many face clusters; shorten common episodes')
     turns = episode_turns(speech, start, end, source)
     # Transcript is retained for short turns; only voice embedding can be skipped.
     eligible = [u for u in turns if u['end']-u['start'] >= config.get('min_voice_seconds', 2)
