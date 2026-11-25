@@ -2,7 +2,7 @@
   "grove": {
     "url": "https://github.com/SitongGong/Grove.git",
     "commit": "5e437cff027ab7df969c17bdb8fc243a6e70961d",
-    "patch_sha256": "5b660c58d09e380abf68de1b970846f77f62b65078769e481307211d0f7f4fe4",
+    "patch_sha256": "ff85faadb4757d5de089c4c05dfd45d4056107230071bee5ae44993c03b0c7d8",
     "bundle_sha256": "78bc4c930410c849b87febeb209e34c488948b31dd762500260458e97c2524c1"
   },
   "person_identity": {
@@ -13,14 +13,17 @@
   "m3_agent": {
     "url": "https://github.com/ByteDance-Seed/m3-agent.git",
     "commit": "0e3e41939bd8a0b66d756e7b7eb8d5fe9992da5c",
-    "face_clustering_source": "mmagent/src/face_clustering.py (unchanged copy)"
+    "face_clustering_source": "mmagent/src/face_clustering.py (unchanged copy)",
+    "memorization_prompt_source": "mmagent/prompts.py:prompt_generate_memory_with_ids_sft (unchanged string value)",
+    "memorization_prompt_sha256": "75dd3021b9dc951e6b6f8c158f006eeafbc302045ad4bdce7b10ce44b3b687dc"
   },
   "reused_files": {
     "lab/reused/__init__.py": "4cedd54420681b06f9cdcc53c66baec8c70e1368552b8af8bc2019d5fa3fa68e",
     "lab/reused/core.py": "989b04ff193b7003645cb25ed620870df1cae67406ae9d174a7e5fd37698a5d1",
     "lab/reused/backends.py": "f788871a10d50122ad66e83ef5dd6792ccdd8df99e121881ea3f123bc75e95e5",
     "lab/reused/identity.py": "7f4e740671cc63a0fb121a169674054da77d6a25688cf24c76a67108c1e03c28",
-    "lab/reused/m3_face_clustering.py": "0501546630ccf00217ae1570609e3939b1f90b1c8985d031c0f49df1c501979b"
+    "lab/reused/m3_face_clustering.py": "0501546630ccf00217ae1570609e3939b1f90b1c8985d031c0f49df1c501979b",
+    "lab/reused/m3_prompt.py": "65bd9b7929a76fb07e001640ddd519f799bb138be1830b365713d606ca51da58"
   },
   "original_reused_files": {
     "lab/reused/backends.py": "ed92175179a622d43db3e6d982330cae499f5c2d270234a6d84d8d590914d9b0"

@@ -1,1 +1,9 @@
-{"backend":"local_omni","model_path":"/models/Qwen2.5-Omni-7B","fps":2,"max_pixels":200704,"max_new_tokens":4096,"attention":"sdpa"}
+{
+  "backend": "m3_memorization",
+  "model_id": "ByteDance-Seed/M3-Agent-Memorization",
+  "model_path": "/models/M3-Agent-Memorization",
+  "model_revision": "SET_DOWNLOADED_REVISION_OR_WEIGHTS_SHA256",
+  "attention": "flash_attention_2",
+  "max_new_tokens": 4096,
+  "temperature": 0.000001
+}

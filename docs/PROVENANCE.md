@@ -20,3 +20,7 @@
 背景参考：[WorldMM](https://github.com/wgcyeo/WorldMM) 的 Video-MME 预处理使用 faster-whisper；这是“本地转录可作为记忆系统前端”的工程参考，不证明其人物关联准确率。
 
 测试视频来自 AMI Corpus 的 IS1009a，视频 Central camera 与 Mix-Headset 音轨合成，来源索引 https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/IS1009a/ 。AMI Consortium，CC BY 4.0。原来源与区间记录在 data/ami-source-manifest.json；新项目复制现有两段 clip，没有生成或替换真实内容。上游 manifest 内旧路径仅表示原下载记录。
+
+联合记忆更新：`lab/reused/m3_prompt.py` 的 `M3_PROMPT` 与固定上游 `mmagent/prompts.py:prompt_generate_memory_with_ids_sft` 字符串一致，保留 Apache 版权头，文件与字符串哈希写入 sources.lock.json。`lab/m3.py` 适配 `memory_processing_qwen.py:generate_video_context/generate_all_memories` 和 `utils/chat_qwen.py`，按原输入顺序使用 face_only 代表图、分组 voice、视频音轨，以及相同 generation token IDs、采样与默认 temperature=1e-6；本地媒体直接传路径，标签单独注册映射，时间保留毫秒。新增严格解析与 Grove 版本化映射不是原源码逐字节复制。
+
+默认权重：[ByteDance-Seed/M3-Agent-Memorization](https://huggingface.co/ByteDance-Seed/M3-Agent-Memorization)。安装指引沿用固定 M3 README 的 Transformers commit `f742a644ca32e65758c3adb36225aef1731bd2a8`、qwen-omni-utils==0.0.4。适配器检查 processor 的显式音频形参以支持 audios/audio，不依靠未知 kwargs；[Transformers 官方 Qwen2.5-Omni 文档](https://huggingface.co/docs/transformers/v4.52.2/en/model_doc/qwen2_5_omni) 作为接口核对资料，未声称已测试所有版本。完整 GPU 依赖锁定和真实推理仍待内网服务器验证。

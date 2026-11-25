@@ -11,7 +11,8 @@ from .common import audio, digest, duration, read, write
 
 def metadata():
     packages = {}
-    for name in ('numpy', 'pydantic', 'torch', 'faster-whisper', 'pyannote.audio', 'funasr', 'transformers', 'insightface'):
+    for name in ('numpy', 'pydantic', 'torch', 'faster-whisper', 'pyannote.audio', 'funasr',
+                 'transformers', 'qwen-omni-utils', 'accelerate', 'insightface'):
         try:
             packages[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
@@ -53,6 +54,9 @@ def main():
         p.add_argument('--'+key, required=True, type=Path)
     p = sub.add_parser('evaluate-association')
     for key in ('truth', 'snapshot', 'bundle', 'out'):
+        p.add_argument('--'+key, required=True, type=Path)
+    p = sub.add_parser('evaluate-equivalence')
+    for key in ('truth', 'snapshot', 'out'):
         p.add_argument('--'+key, required=True, type=Path)
     args = parser.parse_args()
     if args.command == 'speech':
@@ -112,7 +116,11 @@ def main():
             raise ValueError('remove reid_margin: M3 voice matching uses node mean similarity without margin')
         if config['backend'] == 'replay':
             raise ValueError('replay is for unit tests only, not this real inference command')
-        backend = Backend(config, args.config.resolve().parent)
+        if config['backend'] == 'm3_memorization':
+            from .m3 import M3Backend
+            backend = M3Backend(config, args.config.resolve().parent)
+        else:
+            backend = Backend(config, args.config.resolve().parent)
         started = time.perf_counter()
         try:
             prior = read(args.prior)['graph'] if args.prior else None
@@ -131,17 +139,28 @@ def main():
         args.out.mkdir(parents=True, exist_ok=False)
         snapshot = read(args.snapshot)
         if args.identity_mode == 'unknown':
-            for ref in snapshot['character_refs']:
-                ref['character_id'] = None
+            from .grove import hide_identity
+            snapshot = hide_identity(snapshot)
         graph = asyncio.run(write_episode(read(args.episode), snapshot,
                                           make_llm(read(args.config)), args.out/'hypergraph.json'))
         write(args.out/'provenance.json', {'episode_sha256': digest(args.episode),
             'snapshot_sha256': digest(args.snapshot), 'identity_mode': args.identity_mode,
             'config': read(args.config), 'environment': metadata(),
             'scope': 'fixed boundary + real writer + real Grove graph; excludes topic/retrieval'})
+    elif args.command == 'evaluate-equivalence':
+        from .equivalence import equivalence_metrics
+        truth, snapshot = read(args.truth), read(args.snapshot)
+        if (not truth.get('reviewed') or truth.get('bundle_sha256') != snapshot['bundle_sha256'] or
+                truth.get('feature_registry_sha256') != snapshot['feature_registry_sha256']):
+            raise ValueError('reviewed truth tied to exact bundle and feature registry required')
+        write(args.out, dict(metrics=equivalence_metrics(truth, snapshot),
+            eligible_for_selection=not truth.get('synthetic', False),
+            truth_sha256=digest(args.truth), snapshot_sha256=digest(args.snapshot)))
     elif args.command == 'evaluate-association':
         from .reused.core import score_clip, metrics
         truth, snapshot, bundle = read(args.truth), read(args.snapshot), read(args.bundle)
+        if snapshot.get('association_schema') == 'm3_equivalence_v1':
+            raise ValueError('M3 does not predict visibility; use evaluate-equivalence for identity links')
         if not truth.get('reviewed') or truth.get('bundle_sha256') != digest(args.bundle):
             raise ValueError('reviewed association truth tied to exact bundle required')
         if snapshot['bundle_sha256'] != digest(args.bundle):

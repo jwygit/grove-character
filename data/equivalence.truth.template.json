@@ -1,0 +1,9 @@
+{
+  "reviewed": false,
+  "bundle_sha256": "SET_BUNDLE_SHA256",
+  "feature_registry_sha256": "SET_FROM_SNAPSHOT",
+  "pairs": [
+    {"face": "<face_0>", "voice": "<voice_0>", "same_person": true}
+  ],
+  "annotation_note": "Label every face x voice pair in feature_registry, including negative pairs. Identity equivalence is independent of whether a speaker is visible during an utterance."
+}

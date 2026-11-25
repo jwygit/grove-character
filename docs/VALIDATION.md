@@ -4,7 +4,8 @@
 
 | 验证 | 结果 | 可以说明什么 |
 |---|---|---|
-| `python -m unittest discover -s tests -t . -v` | 56 项通过：47 项模块测试、9 项 Grove 测试 | 真实 HDBSCAN 计算、声音分组/匹配、图操作、指标、适配器协议、边界后接入及序列化契约 |
+| `python -m unittest discover -s tests -t . -v` | 75 项通过：58 项模块测试、17 项 Grove 测试 | 真实 HDBSCAN 计算、声音分组/匹配、M3 联合协议、图操作、指标、边界后接入、标签转写及序列化契约 |
+| M3 原始联合 prompt 比对 | 与固定提交的字符串逐字符一致，文件/字符串 SHA 入锁文件 | 没有改写为 association-only 提示 |
 | M3 聚类源码比对 | 与上游文件逐字节一致 | 未重新编写或替换其 HDBSCAN 算法 |
 | `scripts/smoke.py` | 生成 snapshot、真实 Grove hypergraph、synthetic report | 假 LLM / 合成向量下，写入路径可跑，结果明确不用于选型 |
 | AMI 真实视频 ffmpeg 解码 | 音频长度 60.000 秒 | 媒体可读取；已处理 AAC 解码尾部 padding，否则为 60.032 秒 |
@@ -13,6 +14,7 @@
 | compileall | 通过 | 新代码及修改的 Grove 文件语法有效 |
 | Grove git diff --check | 通过 | 无 diff 空白错误 |
 | 清洁 Grove 副本应用补丁并逐文件比较 | 5 个文件完全一致 | 补丁可重现当前实验改动，包括新增模块 |
+| 本次完整导出目录部署 | 离线还原 Grove、75 项测试及新版 smoke 通过，5 个补丁文件逐字节一致 | 新的联合记忆/转写代码可从仓库独立初始化，GPU 推理仍未验证 |
 | 首次发布的 Git 全新导出目录部署 | 离线还原 Grove、当时 31 项测试及 smoke 全部通过，两段视频齐全 | 仓库无需原本机兄弟目录或访问 Grove 上游即可初始化实验代码；GPU 环境未验证 |
 
 Grove 测试使用其真实 VideoEpisode/VideoFact、Pydantic 图节点、VideoHypergraph.save/load，以及新增 writer/provider。boundary hook 测试执行真实修改后的 `_finalize_episode`，**仅用测试替身补上公开仓库缺失的 prompt/llm_utils**；它验证调用顺序，不能证明真实模型的动态边界划分准确。
@@ -26,3 +28,7 @@ Grove 测试使用其真实 VideoEpisode/VideoFact、Pydantic 图节点、VideoH
 尚未验证：Gemini 实际 API 响应、Whisper/pyannote/FunASR 的安装和模型推理、InsightFace/ERes2NetV2 输出、Omni GPU 推理、真实 writer 的事实忠实度、真实 ASR/AV/character 准确率、全 Grove topic/retrieval 链路、实时并行调度与显存/费用。
 
 `scripts/preflight.py` 会列出缺失上游文件，当前 full_grove_pipeline_ready=false。没有把测试替身补成生产源码来冒充完整 Grove 已可运行。
+
+联合记忆更新：75 项 CPU 测试通过（58 模块、17 Grove）。新增覆盖：原始 prompt 和输入顺序、先分组后联合生成、MM:SS 毫秒时间、单复数描述键兼容、未知/矛盾等价结论拒绝、candidate 与 confirmed 的不同映射、无声音视觉记忆、注册标签重放幂等、身份对计分；GPU 调用通过测试替身验证 audios/audio 两种签名、音轨传入和 generation 参数，这不代表真实 GPU 推理通过。
+
+Grove 新增测试执行实际边界 finalize → 取完整 M3 evidence → 摘要转写；验证正文与结构化引用共用映射、无证据标签拒绝、完整标签替换、unknown 对照重渲染、原文/图版本保存，以及真实类型/超图重载。新版 smoke 使用合成 M3 输出和假 writer，生成可检查的原文/character 正文，仍明确 synthetic，不能用于准确率选型。
