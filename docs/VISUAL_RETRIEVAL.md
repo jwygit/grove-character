@@ -1,5 +1,7 @@
 # Visual clip 与 fact 联合检索
 
+当前默认部署入口是 [完整主循环](FULL_LOOP.md)，整体检索架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。它会自动建立 clips 和索引，再调用这里的联合检索模块。下方 week CLI 属于原 benchmark 环境的入口说明，不代表新标准主循环已补齐所有旧入口依赖。
+
 2026-11-26 增加 clip 人物引用和独立人物召回通道；`--character` 可绕过语义 topic/episode 召回漏失，但仍受日期/来源/cutoff 限制。角色与修订流程见 [CHARACTER_GRAPH.md](CHARACTER_GRAPH.md)。以下原视觉通道仍保留；人物标签不会变成额外 fact。
 
 上游 `mmlifelong_week_retrieval_v2.py` 的 `hierarchical_v2_day` 中，`use_visual_channel=True` 原先只收集 clip ID，后续打分为 TODO。`visual_hybrid_day` 则用视觉命中扩展 parent episode 的 facts；另一个 visual rerank 是检索后的附加描述。它们都没有让 clip 独立进入最终的 fact 候选列表。本次补丁实现统一的叶节点检索，并接到 Grove 核心检索器。

@@ -1,5 +1,7 @@
 # Fact → evidence → clip
 
+完整主循环已自动接入本模块，见 [FULL_LOOP.md](FULL_LOOP.md)；带时间的具体例子和各层数据分工见 [ARCHITECTURE.md](ARCHITECTURE.md)。以下首先说明带人物/M3 的证据路径。无人物的基础 fact extractor 直接引用 caption 的 frame ID，由代码还原实际采样帧作为点证据；两条路径都通过同一套时间交集规则关联 clips。
+
 本次新增明确的证据关联，不从“同一个人物/同一个 episode”推断 fact 属于某个 clip。
 
 ```text
@@ -22,7 +24,7 @@ M3 描述 → 视觉定位 → 时间段/实际帧 ──┘                    
 
 不会把多次分离出现连成一个大区间，不把高层 conclusion 自动当成直接观察。conclusion 默认保持未定位。采样率不足、事件在两帧之间、遮挡或人物不确定都可能导致未定位；本版不实现主动说话检测或单独的语义蕴含验证器。
 
-定位结果校验 memory ID、原文/标签哈希、来源、episode 时间、帧 ID、区间范围和区间内的帧支持。API 出错写 `failure.json` 并退出，不把失败伪装成空成功结果。模型定位仍是预测，`provenance.reviewed=false`；合法时间和证据 ID 不代表模型一定看对了动作。
+定位结果校验 memory ID、原文/标签哈希、来源、episode 时间、帧 ID、区间范围和区间内的帧支持。独立 `ground-visual` 命令的 API 出错时写 `failure.json` 并退出；完整主循环则抛错并保留上一个成功 checkpoint，不提交该窗口的半成品。模型定位仍是预测，`provenance.reviewed=false`；合法时间和证据 ID 不代表模型一定看对了动作。
 
 ## 落盘字段
 

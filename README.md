@@ -1,8 +1,19 @@
 # Grove Character
 
-目标：并行提取人脸/声音证据，在 **Grove 确定 episode 边界后、生成最终摘要和 facts 前** 解析人物身份。先测组件，再测记忆写入的 character 归属。
+在 **Grove 确定 episode 边界后、生成最终摘要和 facts 前** 解析人物身份，把 character 和可回看的视觉/语音证据接入记忆。当前已提供完整本地视频主循环；独立模块实验继续保留。
 
 本目录独立于原来的 `Grove`、`m3-agent`、`person-identity`。`vendor/Grove` 是固定上游版本的实验副本，已实际修改；可移植补丁在 `patches/grove-character.patch`，来源与版本在 `sources.lock.json`。
+
+## 文档从这里看
+
+| 想了解什么 | 文档 |
+|---|---|
+| 原版有什么、缺什么；此前已做什么、本次补了什么 | [改动说明](docs/CHANGES.md) |
+| 当前架构、实际执行顺序、各层数据分工，以及 fact 如何对应人物和 clips | [架构与数据流程](docs/ARCHITECTURE.md) |
+| 在 GPU/API 服务器部署，先跑核心、再启用人物，或升级已有副本 | [完整主循环手册](docs/FULL_LOOP.md) |
+| 分开测试 ASR、脸声关联、character 归属，如何控制变量和计分 | [实验设计](docs/DESIGN.md) / [独立模块运行手册](docs/RUNBOOK.md) |
+| 人物图、视觉检索和事实证据的具体字段/接口 | [人物图](docs/CHARACTER_GRAPH.md) / [视觉检索](docs/VISUAL_RETRIEVAL.md) / [fact→clip](docs/FACT_CLIP_EVIDENCE.md) |
+| 实际测过什么、哪些代码来自上游 | [测试记录](docs/VALIDATION.md) / [来源与差异](docs/PROVENANCE.md) |
 
 ## 完整 Grove 主循环
 
@@ -10,14 +21,27 @@
 
 保留 Grove 的构建器、分段器、Topic 聚合器、图结构和检索编排；新增实现不冒充上游未公开的源码或论文复现。端到端测试使用真实视频解码、HTTP、生产模块及索引，仅模型输出为明确测试数据。本机仍未执行真实 GPU 模型准确率验收。
 
-## 两部分代码
+```text
+本地视频 → 抽帧与 VLM 描述 → Grove 动态 episode
+                                  ↓
+                 可选：按已定边界做人脸/声音关联与视觉定位
+                                  ↓
+              episode 摘要 → facts 与 topic → 图、人物投影、clip 证据
+                                  ↓
+                  checkpoint → 索引 → fact / visual clip 联合检索
+```
+
+启用人物时，整段 ASR 在窗口循环前准备；当前人脸/声纹取证在 episode 关闭后顺序执行。核心 API 示例默认开启视觉通道，人物模块另行配置。`--query` 返回检索证据，尚不自动生成自由文本答案。
+
+## 代码与测试入口
 
 | 部分 | 实现 | 验证内容 |
 |---|---|---|
 | 独立模块 | `lab/speech.py`、`perception.py`、`association.py`、`m3.py`、`metrics.py` | Gemini / 本地语音前端、episode 级音画关联、跨 episode 人物图 |
 | 接入 Grove | `vendor/Grove/hypervideo/modules/character_identity.py` 及补丁；`lab/grove.py` | 边界后注入、摘要/事实证据引用、图写入与重载 |
+| 完整主循环 | `lab/full_loop.py`、`lab/stream_identity.py`、Grove `streaming_memory.py` | 实际视频/API、动态分段、facts/topic、自动接回人物和证据、恢复与联合检索 |
 | 独立模块单测 | `tests/modules/` | 分段污染、画外音、误关联、拒识、跨边界与人物 ID |
-| Grove 单测 | `tests/grove/` | 实际 finalize 调用顺序、证据限制、真实 Grove 图序列化 |
+| Grove 接入/端到端测试 | `tests/grove/` | 实际 finalize 调用顺序、证据限制、图序列化、完整主循环及失败恢复 |
 
 详细设计见 [实验设计](docs/DESIGN.md)，GPU/API 操作见 [运行手册](docs/RUNBOOK.md)，复用关系见 [代码来源](docs/PROVENANCE.md)，实际验证见 [测试记录](docs/VALIDATION.md)。
 
@@ -57,6 +81,8 @@ M3 原始输出没有逐句露脸判断，本项目不再为它虚构此标签�
 ```
 
 新机器先安装 `requirements-test.txt`；运行 `python scripts/setup_grove.py`，会从仓库内的 `upstream/Grove.bundle` 离线还原固定版本、验证校验和并应用补丁，无需再访问 Grove 上游。现有目录不会被覆盖。两段 AMI 测试视频也随仓库提供。
+
+已有服务器仅执行 `git pull` 不会更新被忽略的 `vendor/Grove`。请按 [升级步骤](docs/FULL_LOOP.md#已有部署如何升级) 先保留旧副本，再重建本次补丁对应的 vendor。
 
 从 GitHub 部署：
 

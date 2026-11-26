@@ -1,5 +1,7 @@
 # Grove 兼容主循环
 
+本页负责部署与操作。前后版本差异见 [CHANGES.md](CHANGES.md)；系统结构、模型职责、数据分工及具体 fact/clip 例子见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
 本版本在固定 Grove 副本内补齐生产模块，不再通过 `sys.modules` 注入缺失模块。新增 `StreamingMemory` 负责事务、缓存和视频源状态，实际调用原有 `VideoHypergraphBuilder`、`VideoEpisodeSegmenter`、`VideoTopicAggregator`、`VideoHypergraph`、`DualIndex` 和 `HierarchicalRetriever`。没有另造一套记忆图。
 
 这些是根据公开调用接口编写的**兼容实现**，不是恢复作者未发布的源码/提示词，也不承诺复现论文结果。标准 QA 主循环已可运行；旧 VideoRAG 总入口、EgoLife 累积事件、部分异步 benchmark、entity/profile 扩展仍有上游缺口，不用空壳模块冒充支持。
@@ -66,9 +68,33 @@ python -m lab.full_loop \
 - `indices/<id>/`：真实 BM25、三层语义向量和 visual NPZ；`index_manifest.json` 记录图/配置指纹及文件校验和。
 - `run_report.json`：图数量与完整 typed retrieval evidence。`accuracy_measured=false`，不会把运行成功当作准确率。
 
-重复执行同一命令会恢复，已提交窗口不会重新请求模型。`--stop-after-windows 2` 可停在检查点、下次继续。模型版本、输入视频 SHA 或构建配置改变应使用新输出目录；不同人物实验也使用不同目录。不要手改 checkpoint 或把一次运行的中间文件与另一目录混用。
+重复执行同一命令会恢复，已提交窗口不会重新请求模型。`--stop-after-windows 2` 可停在检查点、下次继续。模型版本、输入视频 SHA 或构建配置改变应使用新输出目录；不同人物实验也使用不同目录。不要手改 checkpoint 或把一次运行的中间文件与另一目录混用。`--query` 返回带类型的检索 evidence，不自动调用额外模型生成答案。
 
-摘要/facts/topic/角色分配失败时当前窗口回滚；索引失败保留已经成功的图，下次只重建索引。缓存损坏会重建，不会加载不完整的双索引。一个目录只允许一个写入进程。此驱动是本地视频顺序处理，不是摄像头网络传输服务；当前只管理一个 source 的连续输入。大型视频的帧数上限须显式配置，不能静默丢帧。
+摘要/facts/topic/角色分配失败时当前窗口回滚；索引失败保留已经成功的图，下次只重建索引。派生索引缓存损坏会重建，不会加载不完整的双索引；帧文件被修改、缓存输入/config 不匹配则明确报错，不能混为自动修复所有中间数据。一个目录只允许一个写入进程。此驱动是本地视频顺序处理，不是摄像头网络传输服务；当前只管理一个 source 的连续输入。大型视频的帧数上限须显式配置，不能静默丢帧。
+
+## 已有部署如何升级
+
+仅 `git pull` 不会更新被忽略的 `vendor/Grove/`。`scripts/setup_grove.py` 也不会覆盖已有目录，所以升级时须先保留旧副本。以下步骤从项目根目录执行，先停止使用该 vendor 的运行进程；有本地源码改动时，保留备份供后续比较，不要直接丢弃。
+
+```bash
+git pull --ff-only
+python - <<'PY'
+from pathlib import Path
+import tempfile
+vendor = Path('vendor/Grove')
+if vendor.exists():
+    backup = Path(tempfile.mkdtemp(prefix='grove-vendor-backup-', dir='..')) / 'Grove'
+    vendor.rename(backup)
+    print('旧副本保留在:', backup.resolve())
+PY
+python scripts/setup_grove.py
+python scripts/preflight.py
+python -m unittest discover -s tests -t . -v
+```
+
+这个操作只替换 vendor 源码副本，旧的 `runs/`、本地配置和模型权重仍保留。先用新运行目录验收更新；独立 `grove-write` 产物没有完整主循环 checkpoint，不能把它直接当成新主循环的恢复点。
+
+`checkpoint.json` 是主循环的权威状态，`hypergraph.json` 是导出。现有 `identity-review → grove-project` 能生成审核后的独立图，但当前没有把该图自动导入主循环 checkpoint 的工具；仅替换导出文件后重启，不能让审核状态成为新的恢复状态。
 
 ## 再开启人物
 

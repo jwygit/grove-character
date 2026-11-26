@@ -1,5 +1,7 @@
 # 人物引用、并行召回与身份修订
 
+当前完整架构见 [ARCHITECTURE.md](ARCHITECTURE.md)，自动接入入口见 [FULL_LOOP.md](FULL_LOOP.md)。本页的“并行召回”指人物通道与语义通道共同参与结果；不表示人脸/声音取证已实现实时并发执行。
+
 现在还支持独立的 fact→evidence→clip 边，语音时间与视觉定位不会从人物共现推断，见 [FACT_CLIP_EVIDENCE.md](FACT_CLIP_EVIDENCE.md)。人物图修订会保留这些原始时间证据并重建 clip 引用。
 
 补齐三项：完整检测时间线到 clip 的人物引用；character → clip/fact 反向索引与并行召回；身份合并/撤销后的正文、引用和索引重建。模型与 M3 聚类/声纹策略沿用原实验，新增部分不调用模型。
@@ -29,7 +31,7 @@ flowchart TD
   Semantic --> Merge
 ```
 
-当前离线实验按已确定的 episode 裁剪取证；真实 Grove 钩子在 finalize 边界之后、摘要之前。图中两条取证路径表示职责划分，不代表已完成摄像头实时并行调度。
+独立实验可按给定 episode 裁剪取证；完整主循环由 Grove 动态确定边界，并在 finalize 边界之后、摘要之前调用 `lab.stream_identity`。图中两条取证路径表示职责划分：当前主循环先准备整段 ASR，之后顺序处理 caption，关闭 episode 后才做脸/声取证与 M3 关联，不代表已完成摄像头实时并行调度。
 
 身份源数据保留在 `snapshot.json.graph` / `identity-review` 的 `graph`，包括观测、边和审核日志。Grove 保存轻量 `character_catalog`（观测归属、别名、可选姓名、时间线、覆盖区间）和派生 `character_index`。内容哈希 `identity_state_id` 用于对齐；仅比较整数 revision 不足以区分两个操作数相同的分支。
 
@@ -83,6 +85,8 @@ python -m lab character-lookup --graph runs/grove/hypergraph-reviewed.json \
 ```
 
 `grove-project` 可重复传 `--snapshot` 导入各 episode 时间线；新版 writer 图自带输入。所有输出要求新路径，验证后原子发布，保留原图对照/回滚。`character-lookup` 查反向索引，不做问题相关性排序；可重复 `--character`/`--role` 求并集。
+
+以上命令处理独立快照与图导出。完整 `lab.full_loop` 的权威恢复点是 `checkpoint.json`，其中还包含 buffer、已提交窗口和 provider prior 引用；当前没有把审核图自动迁入该 checkpoint 的入口。不要只替换 `hypergraph.json` 就恢复原主循环，以免继续使用旧身份状态。审核后可先对新图做独立查询与评估。
 
 ## Grove 接入与召回
 

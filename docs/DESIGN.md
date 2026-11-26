@@ -1,5 +1,7 @@
 # 实验设计
 
+当前可执行架构见 [ARCHITECTURE.md](ARCHITECTURE.md)，原版/此前版本/本次实现的差异见 [CHANGES.md](CHANGES.md)。本文定义模型对比方法；其中“固定 episode 边界”是隔离变量的实验设置，不表示完整主循环仍依赖人工给定边界。
+
 人物图的新增实现、数据流和检索对照设计见 [CHARACTER_GRAPH.md](CHARACTER_GRAPH.md)。本版补齐完整检测时间线、人物并行召回和身份修订重建，保持下述模型对照变量不变。
 
 ## 假设与变量
@@ -12,8 +14,8 @@
 2. 在 episode 边界确定后汇总人物证据，能保留完整事件上下文；相比逐窗口关联可能改善准确率，但增加等待时间。先固定边界测试，不同时改变 Grove 分段模型。
 3. 将结构化人物证据交给写入器并保存到 fact，可减少姓名漂移、speaker/actor 混淆；错误身份也可能被固化，因此必须测错误归属和 unknown 误绑定。
 
-运行依赖：原视频/音频 → 并行 caption 与人物证据 → 固定本次 episode 时间范围 → AV 关联及历史人物检索 → 摘要 → facts → Grove 图。
-第一版实验按已有边界离线重放，计算顺序不等同于实时调度已完成。真实流式 provider 将来可等待 evidence watermark；不能用未来 episode 的人物图反向改善过去预测后仍声称在线准确率。
+实际主循环：原视频/音频 → 可选整段 ASR → 抽帧与 caption 窗口 → Grove 动态确定 episode 边界 → 该 episode 的脸/声取证、历史身份匹配与 AV 关联 → 视觉定位 → 摘要 → facts/topic → 图与证据索引。默认 facts 和 topic 可并发；ASR/caption/人物取证目前没有实现实时并行调度。
+组件对比仍可按冻结的边界离线重放。当前 `lab.stream_identity` 已实现动态边界后的 provider，但不是摄像头实时 watermark 服务；不能用未来 episode 的人物图反向改善过去预测后仍声称在线准确率。
 
 ## 第一阶段：语音分段与转录
 
@@ -58,11 +60,11 @@ Grove 适配差异：聚类范围是给定 episode 而非 M3 固定 30 秒；局
 - G1：同样的发言 evidence，使用预测人物图。
 - G2：同样的 evidence，使用人工校正人物图（归属上限，用于定位前端错误）。
 
-这一轮不会把 Grove 原始 writer 与新的简化 writer 直接比较后把收益全归于人物模块。新 writer 覆盖本实验 speaker 和正文 referenced 引用，不支持 Grove 所有 dataset 专用字段。后续获得缺失上游文件后，再测原始 fact extractor 的增量 prompt。
+这一轮不会把另一套基础 writer 与 character writer 直接比较后把收益全归于人物模块。character writer 覆盖本实验 speaker 和正文 referenced 引用，不支持 Grove 所有 dataset 专用字段。本次新增的基础 fact extractor 是兼容实现，并非找回原始 extractor；核心主循环无人物/有人物两种运行方式可用于工程验收，归属准确率的公平对照仍使用上面的同 writer G0/G1/G2。
 
 模型选择事实对应的 `utterance_ids` / `memory_ids`，正文引用提供的 feature 标签；代码用同一版本的 feature→character 映射替换完整标签，避免 face_1/face_10 的子串误替换。摘要、事实和 M3 原始描述转写均使用此映射。speaker 引用来自发言证据，正文标签另记 referenced，不推导 actor/mentioned。事实中每个标签必须有被引用的发言/记忆支持；虚构 ID 和无证据标签报错，但这**不能保证引用在语义上正确**。
 
-这是写入时适配：M3 原本存储 feature 标签并在检索时替换为 character；Grove 存储转写后的正文，同时保存原始输出、原文、feature_mapping 和 graph_revision。人物图未来合并或撤销不会悄悄改写旧事实，需要显式重放/迁移；此版不自动批量更新历史文字。
+这是写入时适配：M3 原本存储 feature 标签并在检索时替换为 character；Grove 存储转写后的正文，同时保存原始输出、原文、feature_mapping 和 graph_revision。已有投影模块能够按新的身份状态批量重建历史正文、clip/fact 引用和人物索引；完整主循环也会刷新这些派生字段。人工确认/撤销的独立审核图目前尚无自动导入主循环 checkpoint 的命令，不能把修改导出文件等同于更新运行状态。具体操作和限制见 [CHARACTER_GRAPH.md](CHARACTER_GRAPH.md)。
 
 人工将不同组产生的事实对齐到共同语义 unit_id，确定 role 与 canonical person；预测 ID 到 canonical person 的映射须来自预设注册/独立身份标注，不能直接读取本条目标答案。漏事实计漏项，多余事实计额外输出；同一 unit/role 不允许重复掩盖错误。报告归属 precision/recall/F1、unit accuracy、覆盖率和 unknown 误绑定率。actor 与 speaker 是不同评价键。文本事实本身的忠实度、完整性需另做人工审查，不能由 character 指标替代。
 
