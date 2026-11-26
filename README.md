@@ -11,6 +11,7 @@
 | 原版有什么、缺什么；此前已做什么、本次补了什么 | [改动说明](docs/CHANGES.md) |
 | 当前架构、实际执行顺序、各层数据分工，以及 fact 如何对应人物和 clips | [架构与数据流程](docs/ARCHITECTURE.md) |
 | 内网要准备哪些模型/镜像，先核心再人物的部署与测试命令 | [内网 GPU 部署](docs/OFFLINE_DEPLOYMENT.md) |
+| 上传视频、观察处理过程、人物/证据时间线和边看边问的网页设计（待实现） | [视频记忆工作台设计](docs/WORKBENCH_DESIGN.md) |
 | 在 GPU/API 服务器部署，先跑核心、再启用人物，或升级已有副本 | [完整主循环手册](docs/FULL_LOOP.md) |
 | 分开测试 ASR、脸声关联、character 归属，如何控制变量和计分 | [实验设计](docs/DESIGN.md) / [独立模块运行手册](docs/RUNBOOK.md) |
 | 人物图、视觉检索和事实证据的具体字段/接口 | [人物图](docs/CHARACTER_GRAPH.md) / [视觉检索](docs/VISUAL_RETRIEVAL.md) / [fact→clip](docs/FACT_CLIP_EVIDENCE.md) |
