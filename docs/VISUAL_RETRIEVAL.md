@@ -108,7 +108,7 @@ PYTHONPATH=vendor/Grove python -m hypervideo.mmlifelong_week_retrieval_v2 \
 
 smoke 生成真实 Grove graph、NPZ、混合 `evidence.json` 和 `context.txt`，其中使用合成向量、固定 query embedding 和测试用文本索引，报告明确 `synthetic=true`，不能用于准确率选型。单测实际运行 NumPy cosine、图加载、核心检索、week retrieval、Stage 2 格式与异常路径；没有执行 GPU 或真实 API。
 
-固定的 Grove 公开版本另外缺少 `index/bm25_index.py`、`index/embedding_index.py`、`retrieval/rrf_fusion.py`，以及此前记录的 builder/prompt 模块；`visual_encoder_server.py` 服务端实现也未随上游提供。本次没有伪造这些实现，所以**完整 Grove CLI 仍需补齐上游运行环境和匹配的 encoder 服务**。已把 retrieval 的重依赖改为延迟导入，可以独立测试新路径；preflight 也会报告缺少的文本索引文件。
+最初补视觉分支时，公开 Grove 仍缺少文本索引、RRF 和部分 prompts/核心模块；后续兼容主循环版本已补齐这些依赖，见 [FULL_LOOP.md](FULL_LOOP.md)。上游未提供 `visual_encoder_server.py`，现在由项目的 `lab.visual_server` 提供本地 SigLIP 图像/文本编码服务。真实部署和依赖见 [OFFLINE_DEPLOYMENT.md](OFFLINE_DEPLOYMENT.md)；工程测试不代表 GPU 模型质量验收。
 
 内网升级不能只 `git pull` 后继续使用旧 `vendor/Grove`。保留旧目录中需要的改动，移到备份目录，再运行 `python scripts/setup_grove.py` 应用新版补丁。原人物关联和 character 转写仍包含在同一补丁中。
 

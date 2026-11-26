@@ -188,7 +188,7 @@ flowchart TD
 
 ## 9. 已验证到什么程度
 
-基准实现通过 173 项测试：102 项组件测试、71 项 Grove 测试；干净目录从 bundle 和补丁重建后也通过全部测试及 5 条 smoke。29 个修改的 Grove 文件逐字节一致。具体记录见 [VALIDATION.md](VALIDATION.md)。
+基准实现通过 173 项测试；加入本地 SigLIP 服务后共 178 项：107 项组件测试、71 项 Grove 测试。干净目录从 bundle 和补丁重建后也通过全部测试及 5 条 smoke。29 个修改的 Grove 文件逐字节一致。具体记录见 [VALIDATION.md](VALIDATION.md)；GPU 部署步骤及尚未验收的环境见 [OFFLINE_DEPLOYMENT.md](OFFLINE_DEPLOYMENT.md)。
 
 端到端测试真实运行视频解码、HTTP 调用、生产分段/抽取/图/索引/检索模块；模型服务返回合成数据，人物测试在 GPU 推理边界提供合成预测。它证明流程和数据契约可执行，尚未证明真实模型的准确率、时延、显存或论文指标。
 

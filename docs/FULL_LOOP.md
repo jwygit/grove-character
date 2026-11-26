@@ -2,6 +2,8 @@
 
 本页负责部署与操作。前后版本差异见 [CHANGES.md](CHANGES.md)；系统结构、模型职责、数据分工及具体 fact/clip 例子见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
+内网 GPU 的模型清单、离线镜像打包、服务启动及「核心 → 视觉 → 人物」可执行命令见 [OFFLINE_DEPLOYMENT.md](OFFLINE_DEPLOYMENT.md)。已补上 `lab.visual_server` 的本地 SigLIP 服务入口；GPU 镜像与真实权重推理仍待目标服务器验收。
+
 本版本在固定 Grove 副本内补齐生产模块，不再通过 `sys.modules` 注入缺失模块。新增 `StreamingMemory` 负责事务、缓存和视频源状态，实际调用原有 `VideoHypergraphBuilder`、`VideoEpisodeSegmenter`、`VideoTopicAggregator`、`VideoHypergraph`、`DualIndex` 和 `HierarchicalRetriever`。没有另造一套记忆图。
 
 这些是根据公开调用接口编写的**兼容实现**，不是恢复作者未发布的源码/提示词，也不承诺复现论文结果。标准 QA 主循环已可运行；旧 VideoRAG 总入口、EgoLife 累积事件、部分异步 benchmark、entity/profile 扩展仍有上游缺口，不用空壳模块冒充支持。
@@ -43,7 +45,7 @@
 | caption | OpenAI-compatible `/v1/chat/completions`，支持多图 `image_url` 与结构化 JSON |
 | writer | 同类文本聊天接口；动态边界、摘要、facts、topic 共用，可与 caption 部署相同模型 |
 | embedding | `/v1/embeddings`，逐输入返回 `index` 和向量，构建/查询使用同一模型版本 |
-| visual_encoder | Grove 已有 server 的 `/health`、`/encode_image_batch`、`/encode_text`；backbone 和维度须与配置一致 |
+| visual_encoder | `lab.visual_server` 或匹配服务的 `/health`、`/encode_image_batch`、`/encode_text`；backbone、维度及服务报告的 revision 须与配置一致 |
 
 `visual_encoder.dim` 的示例值不是自动识别的部署参数，须按实际 `/health` 填写。需要先验证纯文本核心时可显式把 `grove.use_visual_channel` 改为 false，clip 和证据引用仍保存。模型不支持 `response_format` 时可在对应聊天配置设置 `json_mode=false`，输出仍必须通过 JSON/schema 校验。
 

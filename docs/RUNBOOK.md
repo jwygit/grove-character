@@ -2,6 +2,8 @@
 
 完整视频→动态分段→摘要→facts/topic→检索，请先看 [完整主循环手册](FULL_LOOP.md)。以下保留独立模块实验步骤。
 
+内网服务器的模型下载、隔离依赖、镜像传输及核心/人物验收命令见 [内网 GPU 部署](OFFLINE_DEPLOYMENT.md)。尤其不要把 pyannote 4 的运行环境与 M3 指定的 Transformers 环境混装。
+
 fact→clip 新流程：`associate → ground-visual → grove-write → 构建 clips → grove-link-clips`，详细命令及模型服务配置见 [FACT_CLIP_EVIDENCE.md](FACT_CLIP_EVIDENCE.md)。语音按已有发言时间对齐；仅视觉事件定位额外调用模型。升级需重新应用 Grove 补丁，旧 bundle 缺视频哈希时重新 perceive/associate。
 
 人物时间线、clip/fact 引用、并行人物召回及合并/撤销后的 CPU 重建命令见 [CHARACTER_GRAPH.md](CHARACTER_GRAPH.md)。升级时需重新应用 Grove 补丁；旧快照需要重新取证，不能从代表脸推算出现时间。

@@ -62,7 +62,7 @@ class ModelAPI:
 
 
 class VisualAPI:
-    """Uses the existing Grove visual_encoder_server HTTP contract."""
+    """Uses Grove's visual HTTP contract; served locally by lab.visual_server."""
     def __init__(self, config):
         if not config.get("model_revision") or "SET_" in config["model_revision"]:
             raise ValueError("record visual encoder model revision")
@@ -73,6 +73,8 @@ class VisualAPI:
         self.backbone, self.dim = health["backbone"], health["dim"]
         if self.backbone != config["backbone"] or self.dim != config["dim"]:
             raise ValueError("visual encoder health/config mismatch")
+        if health.get("model_revision") and health["model_revision"] != config["model_revision"]:
+            raise ValueError("visual encoder revision/config mismatch")
 
     def encode_images(self, paths):
         result = request_json(self.base + "/encode_image_batch", {"image_b64_list": [

@@ -1,0 +1,9 @@
+.git
+.venv*
+vendor
+models
+runs
+data/media
+**/__pycache__
+.env*
+configs/*.local.json

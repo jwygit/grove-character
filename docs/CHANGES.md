@@ -2,6 +2,8 @@
 
 对照基准是仓库锁定的 Grove 提交 `5e437cff027ab7df969c17bdb8fc243a6e70961d`，不代表作者私有环境或所有后续版本。当前完整主循环实现提交为 [`ca7222e`](https://github.com/jwygit/grove-character/commit/ca7222ee0325b13a698d91f71e9c28bfef829bf0)。
 
+后续内网部署补充：增加 `lab.visual_server` 本地 SigLIP 服务，修正此前误以为上游已经提供可启动 encoder server 的描述；增加分开的 core/visual/ASR/character Docker 配方、离线资产准备与分阶段配置生成器。新增 5 项视觉服务测试，总计 178 项；GPU 镜像构建、真实权重推理和准确率仍待目标服务器验收。操作见 [内网部署手册](OFFLINE_DEPLOYMENT.md)。下表保留主循环版本 `ca7222e` 的前后对照。
+
 需要分清三个阶段：**原版公开代码已有的架构**、**此前已完成的人物/视觉组件**，以及**本次把这些组件串起来的兼容主循环**。人物和视觉功能并非这次才从零实现。
 
 ## 1. 总体前后对照

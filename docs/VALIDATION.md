@@ -1,8 +1,10 @@
 # 实际验证记录
 
-2026-11-26 兼容主循环更新：当前工作目录 **173 项测试通过（102 组件、71 Grove）**，新增 12 项生产核心组件测试和 5 项端到端测试。新增测试真实执行 ffmpeg、loopback HTTP、原 Grove 分段/聚合/图编排、生产 facts/BM25/embedding/RRF、人物投影和 clip 证据；仅模型服务输出与 GPU 推理边界使用合成数据。验证动态生成 3 个 episode、12 条基础 facts、12 个 clips，以及人物扩展的 6 条 facts、跨 episode 相同 character 和具体语音/视觉证据。另覆盖中途失败回滚、重启幂等、topic 更新、源/cutoff、坏缓存重建和模型版本失配。真实模型/GPU准确率验收尚未执行。部署与调用见 [FULL_LOOP.md](FULL_LOOP.md)。
+2026-11-26 内网部署更新：当前 **178 项测试通过（107 组件、71 Grove）**。兼容主循环版本原有 173 项；本次新增 5 项 SigLIP 服务 HTTP 契约测试，验证现有客户端、图像/文本归一化、维度/版本失配拒绝、非法请求及推理异常不返回伪向量。测试 encoder 边界使用明确 fixture；未加载真实 SigLIP 权重。新增 Docker 候选环境和配置生成器的操作说明见 [OFFLINE_DEPLOYMENT.md](OFFLINE_DEPLOYMENT.md)。本机未构建 GPU 镜像，也未验收真实模型/CUDA/显存/识别准确率。
 
-干净目录部署复验：仅导出仓库文件，从 bundle 离线还原并应用补丁；102 项组件测试、71 项 Grove 测试及 5 条 smoke 全部通过。29 个 Grove 修改文件与当前工作目录逐字节一致，92 个 Python 文件通过 AST 检查，两层 Git diff 空白检查通过。审计脚本为 `scripts/check_clean_export.py`；本机报告为 `runs/full-loop-clean-export.json`（不提交运行产物）。
+此前兼容主循环新增的 12 项生产核心组件测试和 5 项端到端测试仍通过：真实执行 ffmpeg、loopback HTTP、原 Grove 分段/聚合/图编排、生产 facts/BM25/embedding/RRF、人物投影和 clip 证据；仅模型服务输出与 GPU 推理边界使用合成数据。验证动态生成 3 个 episode、12 条基础 facts、12 个 clips，以及人物扩展的 6 条 facts、跨 episode 相同 character 和具体语音/视觉证据。另覆盖中途失败回滚、重启幂等、topic 更新、源/cutoff、坏缓存重建和模型版本失配。部署与调用见 [FULL_LOOP.md](FULL_LOOP.md)。
+
+干净目录部署复验：仅导出仓库文件，从 bundle 离线还原并应用补丁；107 项组件测试、71 项 Grove 测试及 5 条 smoke 全部通过。29 个 Grove 修改文件与当前工作目录逐字节一致，95 个 Python 文件通过 AST 检查，两层 Git diff 空白检查通过。审计脚本为 `scripts/check_clean_export.py`；本次本机报告为 `runs/offline-deploy-clean-export.json`（不提交运行产物）。另外，部署手册的 11 个 bash 代码块及其中嵌入的 Python 已通过语法检查；两份部署 shell 脚本通过 `bash -n`，新 CLI help 可运行。语法检查不是 Docker 构建或模型部署验收。
 
 当前 `test_boundary_hook.py` 直接导入生产 prompts/llm_utils，已移除缺失模块的测试替身。preflight 区分兼容核心可导入、模型配置与可选旧 benchmark 缺口。较早版本的验证记录另存于 [VALIDATION_HISTORY.md](VALIDATION_HISTORY.md)。其中“完整主循环未就绪/缺文本索引”描述当时的状态；真实模型未验证的限制仍然成立。
 
@@ -24,4 +26,4 @@ python -m unittest discover -s tests/grove -t . -v
 python scripts/check_clean_export.py --report runs/full-loop-clean-export.json
 ```
 
-纯文档更新不产生新的模型实验结论。当前实现与前后差异见 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [CHANGES.md](CHANGES.md)；真实 API/GPU 验收步骤见 [FULL_LOOP.md](FULL_LOOP.md)。
+当前实现与前后差异见 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [CHANGES.md](CHANGES.md)；真实 API/GPU 验收步骤见 [OFFLINE_DEPLOYMENT.md](OFFLINE_DEPLOYMENT.md)。
