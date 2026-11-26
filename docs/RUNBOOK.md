@@ -1,5 +1,7 @@
 # 运行手册
 
+完整视频→动态分段→摘要→facts/topic→检索，请先看 [完整主循环手册](FULL_LOOP.md)。以下保留独立模块实验步骤。
+
 fact→clip 新流程：`associate → ground-visual → grove-write → 构建 clips → grove-link-clips`，详细命令及模型服务配置见 [FACT_CLIP_EVIDENCE.md](FACT_CLIP_EVIDENCE.md)。语音按已有发言时间对齐；仅视觉事件定位额外调用模型。升级需重新应用 Grove 补丁，旧 bundle 缺视频哈希时重新 perceive/associate。
 
 人物时间线、clip/fact 引用、并行人物召回及合并/撤销后的 CPU 重建命令见 [CHARACTER_GRAPH.md](CHARACTER_GRAPH.md)。升级时需重新应用 Grove 补丁；旧快照需要重新取证，不能从代表脸推算出现时间。
@@ -121,7 +123,7 @@ python -m lab evaluate-characters --truth data/characters.truth.json --predictio
 
 ## 6. 完整 Grove 接入位置
 
-获得上游缺失模块后，在喂 caption 前调用：
+新兼容主循环已自动安装此 hook（见 [FULL_LOOP.md](FULL_LOOP.md)）；直接使用 builder 时，在喂 caption 前调用：
 
 ```python
 from hypervideo.modules.character_identity import SnapshotProvider

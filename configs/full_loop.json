@@ -1,0 +1,11 @@
+{
+  "caption": {"endpoint":"http://127.0.0.1:8000/v1/chat/completions", "model":"SET_VISION_LANGUAGE_MODEL", "model_revision":"SET_DEPLOYMENT_REVISION", "api_key_env":"VLM_API_KEY", "timeout":300},
+  "writer": {"endpoint":"http://127.0.0.1:8000/v1/chat/completions", "model":"SET_TEXT_OR_VISION_LANGUAGE_MODEL", "model_revision":"SET_DEPLOYMENT_REVISION", "api_key_env":"LLM_API_KEY", "timeout":300},
+  "embedding": {"endpoint":"http://127.0.0.1:8001/v1/embeddings", "model":"SET_TEXT_EMBEDDING_MODEL", "model_revision":"SET_DEPLOYMENT_REVISION", "api_key_env":"EMBEDDING_API_KEY", "timeout":120},
+  "visual_encoder": {"server_url":"http://127.0.0.1:9090", "backbone":"siglip", "dim":1152, "model_revision":"SET_DEPLOYED_WEIGHT_REVISION", "timeout":120},
+  "time_origin":86400,
+  "sample_seconds":2,
+  "window_seconds":10,
+  "max_frames_per_video":7200,
+  "grove":{"dataset_mode":"qa", "boundary_strategy":"stream", "use_visual_channel":true, "min_buffer_frames":5, "max_buffer_seconds":120, "fact_top_k":10}
+}

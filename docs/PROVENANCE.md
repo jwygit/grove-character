@@ -1,5 +1,7 @@
 # 来源与复用范围
 
+2026-11-26 主循环更新：新增缺失的 `fact_extractor`、`fact_deduplicator`、`llm_utils`、episode/topic prompts、BM25、embedding index 和 RRF，以及 `hypervideo/streaming_memory.py`。这些是本项目根据 Grove 公开接口新写的兼容实现，不是上游源码恢复。保留其三层节点/超边、原分段器与 Topic 聚合器；API 驱动与动态人物 provider 位于 `lab/full_loop.py`、`lab/stream_identity.py`。标准主循环不依赖缺失的 VideoRAG 存储或 benchmark 插件。旧说明中“未补文本索引”指此前版本。
+
 fact/clip 更新：新增本项目维护的 `lab/fact_evidence.py`，原样复制为 Grove `modules/fact_evidence.py`；新增 `fact_clips.py` 适配真实图节点与检索。视觉定位使用独立 `lab/visual_grounding.py` 多图 API 流程和实际解码 PTS，不改 M3 原始提示或聚类源码；定位提示、帧、媒体与部署版本进入 provenance。
 
 2026-11-26 人物图更新：新增 `lab/character_links.py` 纯投影/索引契约，逐字节复制到 Grove `modules/character_links.py`（测试检查一致），由本项目维护；不是 M3 原始实现。新增 Grove `character_projection.py` 和 `character_cache.py`，扩展原 writer、图类型、builder 和两条检索入口。`lab/identity_state.py` 继续复用原 `IdentityGraph` 的观测、确认/撤销和审计机制；未改 M3 的聚类源码或联合提示。

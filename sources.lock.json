@@ -2,7 +2,7 @@
   "grove": {
     "url": "https://github.com/SitongGong/Grove.git",
     "commit": "5e437cff027ab7df969c17bdb8fc243a6e70961d",
-    "patch_sha256": "ae894b6308fdb6370a7caacbdcf65646cee7e949ebf7d602bd087177a8fac494",
+    "patch_sha256": "a913243f0bd8aa141377a6b83c405e99e500f5a80168a01b1033e3e970b07da9",
     "bundle_sha256": "78bc4c930410c849b87febeb209e34c488948b31dd762500260458e97c2524c1"
   },
   "person_identity": {

@@ -1,5 +1,11 @@
 # 实际验证记录
 
+2026-11-26 兼容主循环更新：当前工作目录 **173 项测试通过（102 组件、71 Grove）**，新增 12 项生产核心组件测试和 5 项端到端测试。新增测试真实执行 ffmpeg、loopback HTTP、原 Grove 分段/聚合/图编排、生产 facts/BM25/embedding/RRF、人物投影和 clip 证据；仅模型服务输出与 GPU 推理边界使用合成数据。验证动态生成 3 个 episode、12 条基础 facts、12 个 clips，以及人物扩展的 6 条 facts、跨 episode 相同 character 和具体语音/视觉证据。另覆盖中途失败回滚、重启幂等、topic 更新、源/cutoff、坏缓存重建和模型版本失配。真实模型/GPU准确率验收尚未执行。部署与调用见 [FULL_LOOP.md](FULL_LOOP.md)。
+
+干净目录部署复验：仅导出仓库文件，从 bundle 离线还原并应用补丁；102 项组件测试、71 项 Grove 测试及 5 条 smoke 全部通过。29 个 Grove 修改文件与当前工作目录逐字节一致，92 个 Python 文件通过 AST 检查，两层 Git diff 空白检查通过。审计脚本为 `scripts/check_clean_export.py`；本机报告为 `runs/full-loop-clean-export.json`（不提交运行产物）。
+
+当前 `test_boundary_hook.py` 直接导入生产 prompts/llm_utils，已移除缺失模块的测试替身。preflight 区分兼容核心可导入、模型配置与可选旧 benchmark 缺口。以下为历史验证记录，其中“完整主循环未就绪/缺文本索引”的描述已被本次更新取代；真实模型未验证的限制仍然成立。
+
 2026-11-26 fact→clip 更新：完整 156 项 CPU 测试通过，新增 27 项（15 独立模块、12 Grove）。覆盖发言时间与未知 speaker、实际解码帧 PTS、多图 API 输入协议、视觉区间/点帧、帧证据校验、错误 ID/媒体/来源、跨窗口交集、重叠覆盖去重、未定位、真实 writer 和图重载、身份修订不移动证据、窗口重建、引用范围/cutoff、旧引用拒用、关闭视觉编码仍保留引用，以及独立/Grove CLI 输出一致性。新增 `smoke_fact_clips.py` 生成 4 条 facts、2 个 clips、4 条边，覆盖状态为 3 complete + 1 unlocalized；是合成结果，不是准确率。本机实际执行 ffmpeg，定位 API/模型和 writer 使用明确测试替身，未运行真实视觉模型。
 
 本次干净目录部署：仅导出仓库文件，从 bundle 离线还原 Grove 并应用更新补丁。90 项独立模块测试、66 项 Grove 测试均通过；原有三条 smoke 与新增 fact-clips smoke 共四条全部通过；18 个 Grove 修改文件与工作目录逐字节一致，Python AST 和 Git diff 空白检查通过。preflight 仍诚实报告完整上游环境未就绪。

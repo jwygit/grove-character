@@ -9,3 +9,5 @@ data/media/*
 !data/media/IS1009a_02.mp4
 vendor/Grove/
 .DS_Store
+
+configs/*.local.json
