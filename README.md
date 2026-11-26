@@ -12,6 +12,7 @@
 | 当前架构、实际执行顺序、各层数据分工，以及 fact 如何对应人物和 clips | [架构与数据流程](docs/ARCHITECTURE.md) |
 | 内网要准备哪些模型/镜像，先核心再人物的部署与测试命令 | [内网 GPU 部署](docs/OFFLINE_DEPLOYMENT.md) |
 | 上传视频、阶段实时输出、人物关联和带引用问答 | [工作台部署与使用](docs/WORKBENCH.md) · [设计与素材](docs/WORKBENCH_DESIGN.md) |
+| 中文多人访谈演示视频、整期下载与内网校验 | [圆桌派演示素材](docs/DEMO_VIDEO.md) |
 | 在 GPU/API 服务器部署，先跑核心、再启用人物，或升级已有副本 | [完整主循环手册](docs/FULL_LOOP.md) |
 | 分开测试 ASR、脸声关联、character 归属，如何控制变量和计分 | [实验设计](docs/DESIGN.md) / [独立模块运行手册](docs/RUNBOOK.md) |
 | 人物图、视觉检索和事实证据的具体字段/接口 | [人物图](docs/CHARACTER_GRAPH.md) / [视觉检索](docs/VISUAL_RETRIEVAL.md) / [fact→clip](docs/FACT_CLIP_EVIDENCE.md) |
@@ -99,7 +100,7 @@ python -m unittest discover -s tests -t . -v
 python scripts/preflight.py
 ```
 
-仓库为私有，需要具备 GitHub 访问凭据。内网无法访问 PyPI/模型仓库时，依赖 wheel 和模型权重需提前下载或使用内部镜像；见运行手册。以上先验证 CPU 测试，不会自动安装 GPU 模型。
+仓库目前为公开仓库。内网无法访问 PyPI/模型仓库时，依赖 wheel 和模型权重需提前下载或使用内部镜像；见运行手册。以上先验证 CPU 测试，不会自动安装 GPU 模型。
 
 `smoke` 使用人工构造的向量、关联和假 LLM，执行真实 Grove 数据模型及图保存/读取；结果明确标为 synthetic，不能据此选模型。真实推理命令不会退回假数据。
 
@@ -108,4 +109,4 @@ python scripts/preflight.py
 - 公开 Grove 的核心缺失模块已在实验副本中兼容实现。标准 QA 主循环通过工程端到端测试；旧 VideoRAG 总入口、部分 benchmark 异步/音频/entity/profile 扩展仍缺上游实现，不属于本次支持范围。
 - 本机没有 GPU/模型权重，也未提供 Gemini 或 writer API 凭据。模型适配代码已写，**没有真实模型准确率或显存结论**。
 - 发言证据产生 `speaker` 引用；正文中的已知人物标签产生 `referenced` 引用，不自动解释为视觉 `actor` 或被谈论的 `mentioned`。语义归属及事实忠实度仍需人工标注测试。
-- 两段 AMI 视频已复制到 `data/media/`，是真实英语会议视频，只适合初步联调；标注模板尚未人工复核。FunASR 中文方案需另备中文数据，不与英语 AMI 直接做排名。
+- 两段 AMI 视频及《圆桌派》8 分钟中文短片已提供在 `data/media/`，用于初步联调；圆桌派整期通过 Release 下载，见 [素材说明](docs/DEMO_VIDEO.md)。尚未人工标注，中文与英语样本不直接混做模型排名。

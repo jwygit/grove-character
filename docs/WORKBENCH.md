@@ -171,6 +171,6 @@ PLAYWRIGHT_MODULE=/tmp/grove-browser-tools/node_modules/playwright \
   "$PWD/runs/browser-check/browser-test.mp4" "$PWD/runs/browser-check/screenshots"
 ```
 
-工程测试在模型预测边界使用显式 fixture，Grove 核心、关联算法、证据对齐、检索索引和 Web 流程都实际运行；不能据此声称真实 ASR/人脸/声纹/M3/问答准确率达标。部署后先跑仓库 AMI 短片，再上传连续 5–8 分钟中文访谈，核验发言文字与时间、跨镜头 character、错配/unknown、每条 fact 的 clip 证据，以及回答是否真的得到引用支持；最后再跑长片。推荐素材来源见 [设计与素材说明](WORKBENCH_DESIGN.md)，尚未下载节目 MP4。
+工程测试在模型预测边界使用显式 fixture，Grove 核心、关联算法、证据对齐、检索索引和 Web 流程都实际运行；不能据此声称真实 ASR/人脸/声纹/M3/问答准确率达标。部署后先跑仓库 AMI 短片，再上传仓库提供的《圆桌派》连续 8 分钟中文访谈，核验发言文字与时间、跨镜头 character、错配/unknown、每条 fact 的 clip 证据，以及回答是否真的得到引用支持；最后再跑长片。已下载的 43:59 整期、短片、来源和校验命令见 [演示素材](DEMO_VIDEO.md)。
 
 2026-11-26 本机验收：干净导出重新还原 29 个 Grove 补丁文件，105 个 Python 文件语法检查通过；独立模块 **113** 项、Grove 接入 **75** 项通过（共 **188** 项），另通过 5 个端到端 smoke。Chrome 浏览器通过上传、后台实际 worker、SSE 输出、历史快照、引用回看、刷新恢复和窄屏检查。环境为 macOS / Python 3.13；Linux Docker 构建、GPU 模型性能及中文长视频准确率尚未验证。

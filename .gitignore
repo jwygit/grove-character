@@ -7,6 +7,7 @@ models/
 data/media/*
 !data/media/IS1009a_01.mp4
 !data/media/IS1009a_02.mp4
+!data/media/yuanzhuopai-s2e11-ai-short.mp4
 vendor/Grove/
 .DS_Store
 

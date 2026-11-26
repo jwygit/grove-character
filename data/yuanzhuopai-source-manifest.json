@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "title": "圆桌派 S2E11：AI：圆桌新嘉宾，空前不绝后",
+  "language": "zh",
+  "retrieved_on": "2026-11-26",
+  "source": {
+    "id": "vlEbfmQXC7I",
+    "title": "【圆桌派】当AI越来越懂人类，我们会不会被机器控制？窦文涛、杨强拆解人工智能边界，看懂机器无法复刻的人性弱点！| 圆桌派 第二季 | 优酷纪实人文 YOUKU DOCUMENTARY",
+    "webpage_url": "https://www.youtube.com/watch?v=vlEbfmQXC7I",
+    "channel": "YOUKU DOCUMENTARY-Get APP now",
+    "channel_id": "UClrB06PsOMunWlRUe7k9m9w",
+    "channel_url": "https://www.youtube.com/channel/UClrB06PsOMunWlRUe7k9m9w",
+    "upload_date": "20260806",
+    "duration": 2639,
+    "license": null
+  },
+  "source_version_note": "实际文件为优酷纪实官方频道 43:59 发布版；不同于旧优酷播单标注的 45:53，未验证二者剪辑差异。",
+  "distribution_authorization": {
+    "basis": "project_owner_assertion",
+    "confirmed_on": "2026-11-26",
+    "statement": "我有视频公开再分发授权",
+    "independently_verified": false,
+    "note": "授权由项目所有者确认；版权仍归原权利人，代码许可不覆盖节目，不声明 Creative Commons 许可。"
+  },
+  "release": {
+    "repository": "jwygit/grove-character",
+    "tag": "demo-yuanzhuopai-s2e11-v1",
+    "url": "https://github.com/jwygit/grove-character/releases/tag/demo-yuanzhuopai-s2e11-v1"
+  },
+  "preparation": {
+    "downloader": "yt-dlp 2026.11.23 with default dependencies",
+    "format_selection": "136+140",
+    "ffmpeg": "8.1.2",
+    "full": "Stream copy of H.264/AAC with MP4 faststart",
+    "short": "ffmpeg -ss 30 -i full.mp4 -t 480 -map 0:v:0 -map 0:a:0 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart short.mp4",
+    "burned_in_subtitles_preserved": true
+  },
+  "assets": {
+    "short": {
+      "filename": "yuanzhuopai-s2e11-ai-short.mp4",
+      "path": "data/media/yuanzhuopai-s2e11-ai-short.mp4",
+      "bytes": 83906780,
+      "sha256": "64b73a1543594a9ddcf26275b02ed74eee7ff5fa4cb64056361d639bdc055fb8",
+      "duration_seconds": 480.0,
+      "source_start_seconds": 30,
+      "source_end_seconds": 510,
+      "tracked_in_git": true,
+      "download_url": "https://github.com/jwygit/grove-character/releases/download/demo-yuanzhuopai-s2e11-v1/yuanzhuopai-s2e11-ai-short.mp4",
+      "faststart": true,
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1280,
+          "height": 720,
+          "r_frame_rate": "30/1",
+          "start_time": "0.000000",
+          "duration": "480.000000"
+        },
+        {
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "sample_rate": "44100",
+          "channels": 2,
+          "r_frame_rate": "0/0",
+          "start_time": "0.000000",
+          "duration": "480.000000"
+        }
+      ]
+    },
+    "full": {
+      "filename": "yuanzhuopai-s2e11-ai-full.mp4",
+      "path": "data/media/yuanzhuopai-s2e11-ai-full.mp4",
+      "bytes": 389048624,
+      "sha256": "ccc1afc74d34bbd64466ba86fa792214d53fe2180915942154f77468f2ac10b1",
+      "duration_seconds": 2638.831746,
+      "source_start_seconds": 0,
+      "source_end_seconds": 2638.831746,
+      "tracked_in_git": false,
+      "download_url": "https://github.com/jwygit/grove-character/releases/download/demo-yuanzhuopai-s2e11-v1/yuanzhuopai-s2e11-ai-full.mp4",
+      "faststart": true,
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1280,
+          "height": 720,
+          "r_frame_rate": "30/1",
+          "start_time": "0.000000",
+          "duration": "2638.766667"
+        },
+        {
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "sample_rate": "44100",
+          "channels": 2,
+          "r_frame_rate": "0/0",
+          "start_time": "0.000000",
+          "duration": "2638.831746"
+        }
+      ]
+    }
+  },
+  "validation": {
+    "real_model_inference": false,
+    "manual_ground_truth": false,
+    "visual_check": "Sampled frames in the selected interval; not a full manual review",
+    "full_audio_video_decode": "passed",
+    "short_audio_video_decode": "passed",
+    "mp4_faststart": "passed_both",
+    "short_workbench_upload_sha256_and_range": "passed",
+    "download_tool_unit_tests": 3
+  }
+}
