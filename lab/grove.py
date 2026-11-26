@@ -17,9 +17,16 @@ def hide_identity(snapshot):
     for memory in evidence.get('memories', []):
         memory.pop('character_text', None)
     evidence.pop('writer_summary_raw', None)
+    evidence.pop('projection_input', None)
+    evidence.pop('direct_bindings', None)
+    evidence.pop('direct_renderings', None)
     # These are not writer input; omit them in the control to avoid accidental leakage.
-    for key in ('graph', 'raw', 'equivalences', 'feature_registry'):
+    for key in ('graph', 'raw', 'equivalences', 'feature_registry', 'identity_state', 'temporal_evidence'):
         snapshot.pop(key, None)
+    for row in snapshot['character_refs'] + list(evidence.get('feature_mapping', {}).values()):
+        for key in ('identity_observation_ids', 'candidate_character_ids', 'identity_state_id', 'binding_status'):
+            row.pop(key, None)
+    evidence.pop('identity_state_id', None)
     return snapshot
 
 
@@ -57,6 +64,7 @@ async def write_episode(episode_data, snapshot, llm, output):
     from types import SimpleNamespace
     import json
     episode = VideoEpisode.from_dict(dict(episode_data))
+    episode.source_id = snapshot['source']
     provider = SnapshotProvider([snapshot], snapshot['source'])
     episode.character_refs, episode.identity_evidence = await resolve_episode_identity(
         provider, episode.start_seconds, episode.end_seconds)
@@ -70,6 +78,9 @@ async def write_episode(episode_data, snapshot, llm, output):
     graph.add_episode_node(episode)
     for fact in result.facts:
         graph.add_fact_node(fact)
+    if 'identity_state' in snapshot:
+        from hypervideo.modules.character_projection import rebuild_characters
+        graph = rebuild_characters(graph, snapshot['identity_state'], [snapshot])
     # This isolated writer intentionally does not simulate topic aggregation/retrieval.
     graph.save(str(output))
     restored = VideoHypergraph.load(str(output))

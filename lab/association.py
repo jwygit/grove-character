@@ -146,19 +146,20 @@ def finish_association(prepared, payload, accept_links=False):
 def associate(bundle, backend, prior=None, accept_links=False, match_threshold=None):
     """Public orchestration: grouping is complete before the model is called."""
     prepared = prepare_association(bundle,prior,match_threshold)
+    from .identity_state import attach_temporal_evidence
     if getattr(backend, 'mode', None) == 'm3_memorization':
         from .m3 import prepare_features, finish_memorization
         prepare_features(prepared)
         # Visual memories are required even with no eligible voice groups.
         raw = backend.infer(prepared.clip, 'm3_memorization')
-        return finish_memorization(prepared, raw, accept_links)
+        return attach_temporal_evidence(finish_memorization(prepared, raw, accept_links), bundle)
     if prepared.clip['voice_groups']:
         raw = backend.infer(prepared.clip,'voice_association')
     else:
         raw = {'voice_links':[],'segments':[],'inference_skipped':'no_eligible_voice_groups'}
     snapshot = finish_association(prepared,raw,accept_links)
     snapshot['raw'] = raw
-    return snapshot
+    return attach_temporal_evidence(snapshot, bundle)
 
 
 def resolve(bundle, predictions, prior=None, accept_links=False, match_threshold=None):

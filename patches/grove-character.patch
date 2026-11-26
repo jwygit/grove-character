@@ -17,7 +17,7 @@ index 0bb6c77..11a7098 100644
      # 超图嵌入传播权重 λ
      embedding_propagation_lambda: float = 0.5
 diff --git a/hypervideo/extractors/episode_segmenter.py b/hypervideo/extractors/episode_segmenter.py
-index f4630f8..af4ffca 100644
+index f4630f8..01b4140 100644
 --- a/hypervideo/extractors/episode_segmenter.py
 +++ b/hypervideo/extractors/episode_segmenter.py
 @@ -79,6 +79,9 @@ class VideoEpisodeSegmenter:
@@ -50,16 +50,17 @@ index f4630f8..af4ffca 100644
  
          episode = VideoEpisode(
              episode_id=str(uuid4()),
-@@ -603,6 +617,8 @@ class VideoEpisodeSegmenter:
+@@ -603,6 +617,9 @@ class VideoEpisodeSegmenter:
              end_seconds=last_fc.end_seconds,
              day=first_fc.day,
              frame_captions=frames,
 +            character_refs=self._identity_refs,
 +            identity_evidence=self._identity_evidence,
++            source_id=self._identity_evidence.get('source', ''),
              summary=summary_result.get("summary", ""),
              subject=summary_result.get("subject", ""),
              keywords=summary_result.get("keywords", []),
-@@ -655,6 +671,9 @@ class VideoEpisodeSegmenter:
+@@ -655,6 +672,9 @@ class VideoEpisodeSegmenter:
                  "\n".join(qb_lines) if qb_lines else "(no active user questions)"
              )
          prompt = prompt_template.format(**format_kwargs)
@@ -70,7 +71,7 @@ index f4630f8..af4ffca 100644
          def _parse(response: str) -> dict:
              data = parse_json_loose(response)
 diff --git a/hypervideo/extractors/hypergraph_builder.py b/hypervideo/extractors/hypergraph_builder.py
-index 436562d..8266737 100644
+index 436562d..7f8b508 100644
 --- a/hypervideo/extractors/hypergraph_builder.py
 +++ b/hypervideo/extractors/hypergraph_builder.py
 @@ -295,6 +295,18 @@ class VideoHypergraphBuilder:
@@ -102,8 +103,62 @@ index 436562d..8266737 100644
              and getattr(self._config, "egolife_accumulative_event_enabled", True)
          )
  
+@@ -741,8 +754,17 @@ class VideoHypergraphBuilder:
+ 
+     BUILDER_STATE_FILENAME = "builder_state.json"
+ 
++    def refresh_character_projections(self):
++        from ..modules.character_projection import refresh_characters
++        updated = refresh_characters(self._hypergraph)
++        if updated is not self._hypergraph:
++            self._hypergraph = updated
++            if self._fact_deduplicator is not None:
++                self._fact_deduplicator._hypergraph = updated
++
+     def save(self, working_dir: str):
+         """保存超图 + segmenter buffer 状态。"""
++        self.refresh_character_projections()
+         hg_path = os.path.join(working_dir, self._config.hypergraph_filename)
+         self._hypergraph.save(hg_path)
+         logger.info(f"超图已保存到 {hg_path}")
+diff --git a/hypervideo/hyper_video_graph.py b/hypervideo/hyper_video_graph.py
+index 41a9b03..f509df6 100644
+--- a/hypervideo/hyper_video_graph.py
++++ b/hypervideo/hyper_video_graph.py
+@@ -380,6 +380,10 @@ class HyperVideoGraph:
+         hypergraph_embeddings.npz). 命中 ≥ 95% 节点就直接复用, 跳过 rebuild
+         (每次 ~6 min OpenAI embedding 调用). 否则 rebuild + 立即 save.
+         """
++        self.hypergraph_builder.refresh_character_projections()
++        from .modules.character_cache import ensure_character_text_index
++        if await ensure_character_text_index(self):
++            return
+         if not self.hypergraph_builder.index_dirty:
+             return
+         try:
+@@ -426,6 +430,9 @@ class HyperVideoGraph:
+         current_time_span: str = None,
+         mode: str = "hierarchical",
+         bm25_query: str = None,
++        characters=None,
++        character_roles=None,
++        source_id=None,
+     ) -> RetrievalResult:
+         """层次检索入口
+ 
+@@ -434,7 +441,9 @@ class HyperVideoGraph:
+             bm25_query: 可选, fact 检索的 BM25 关键词 query; None 回退 query。
+         """
+         await self.ensure_retrieval_index()
+-        return await self.retriever.retrieve(query, current_time_span, mode=mode, bm25_query=bm25_query)
++        self.retriever._hypergraph = self.hypergraph_builder.hypergraph
++        return await self.retriever.retrieve(query, current_time_span, mode=mode, bm25_query=bm25_query,
++            characters=characters, character_roles=character_roles, source_id=source_id)
+ 
+     def format_retrieval_for_llm(self, result: RetrievalResult) -> str:
+         """格式化检索结果为 LLM 上下文"""
 diff --git a/hypervideo/mmlifelong_week_retrieval_v2.py b/hypervideo/mmlifelong_week_retrieval_v2.py
-index 1d2b35e..2af6e56 100644
+index 1d2b35e..e688013 100644
 --- a/hypervideo/mmlifelong_week_retrieval_v2.py
 +++ b/hypervideo/mmlifelong_week_retrieval_v2.py
 @@ -19,18 +19,6 @@
@@ -257,7 +312,7 @@ index 1d2b35e..2af6e56 100644
  
  
  # =============================================================================
-@@ -725,10 +706,12 @@ async def _retrieve_day_scoped(
+@@ -725,10 +706,15 @@ async def _retrieve_day_scoped(
      visual_index_path: Optional[str] = None,
      score_prop: str = 'none',  # 'none' | 'mult' | 'additive' | 'rrf'
      use_visual_channel: bool = False,
@@ -265,41 +320,80 @@ index 1d2b35e..2af6e56 100644
 +    visual_min_score: Optional[float] = None,
      topic_top_n: int = 3,        # hierarchical_v2 用: topic 阶段取多少
      ep_top_n: int = 0,           # hierarchical_v2 用: episode 阶段取多少, 0=max(top_k//2, 5)
++    characters=None,
++    character_roles=None,
++    source_id=None,
  ) -> Tuple[List[dict], List[dict], List[str]]:
 -    """6 种 day-scoped 检索. 返回 (facts, parent_episodes, debug_info_lines).
 +    """Day-scoped retrieval. Returns (typed_evidence, parent_episodes, debug_lines).
  
      mode:
        - 'dual_fact_day' / 'fact_only_day':  在目标日 fact 子集上 RRF
-@@ -754,7 +737,7 @@ async def _retrieve_day_scoped(
+@@ -741,6 +727,10 @@ async def _retrieve_day_scoped(
+                                作为一等公民和 fact 一起被检索 (需 hypergraph 有 visual_clips)
+     """
+     await indexed.hyper_vg.ensure_retrieval_index()
++    if characters or indexed.hyper_vg.hypergraph_builder.hypergraph.character_catalog:
++        indexed = IndexedHypergraph(indexed.hyper_vg)
++    if characters and mode != 'hierarchical_v2_day':
++        raise ValueError('character recall requires hierarchical_v2_day')
+     dual = indexed.hyper_vg.dual_index
+     hg = indexed.hyper_vg.hypergraph_builder.hypergraph
+     debug: List[str] = []
+@@ -754,12 +744,16 @@ async def _retrieve_day_scoped(
          cand_ep_ids = {eid for eid, e in indexed.episodes_raw.items()
                         if indexed.ep_id_to_day.get(eid) == target_day}
  
 -    if not cand_fact_ids:
-+    if not cand_fact_ids and not (mode == 'hierarchical_v2_day' and use_visual_channel):
++    if not cand_fact_ids and not (mode == 'hierarchical_v2_day' and (use_visual_channel or characters or source_id)):
          cand_fact_ids = indexed.fact_ids_all()
          cand_ep_ids = set(indexed.episodes_raw.keys())
          debug.append(f"fallback to all (no facts on day {target_day})")
-@@ -897,6 +880,18 @@ async def _retrieve_day_scoped(
+ 
+     debug.append(f"mode={mode} cand_facts={len(cand_fact_ids)} cand_eps={len(cand_ep_ids)}")
++    if source_id is not None:
++        if mode != 'hierarchical_v2_day': raise ValueError('source scope requires hierarchical_v2_day')
++        cand_ep_ids = {eid for eid in cand_ep_ids if hg.episodes[eid].source_id==source_id}
++        cand_fact_ids = {fid for fid in cand_fact_ids if set(hg.facts[fid].episode_ids).issubset(cand_ep_ids)}
+ 
+     fact_hits: List[Tuple[str, float]] = []
+ 
+@@ -801,7 +795,7 @@ async def _retrieve_day_scoped(
+             eps = getattr(t_node, 'episode_ids', None) or getattr(t_node, 'episodes', None) or []
+             topic_ep_ids.update(eps)
+         # 与 day 限制取交
+-        if not cross_day and target_day is not None:
++        if (not cross_day and target_day is not None) or source_id is not None:
+             topic_ep_ids &= cand_ep_ids
+         if not topic_ep_ids:
+             topic_ep_ids = cand_ep_ids
+@@ -892,11 +886,25 @@ async def _retrieve_day_scoped(
+             debug.append("hier_v2: topic->ep empty, fallback all day eps")
+ 
+         # Stage B: 在 topic_ep_ids 上检索 episode top-K
++        topic_ep_ids &= cand_ep_ids
+         ep_top_k = ep_top_n if ep_top_n > 0 else max(top_k // 2, 5)
+         ep_hits = await dual.search_within(query, topic_ep_ids, 'episode', top_n=ep_top_k)
          ep_scores = dict(ep_hits)
          debug.append(f"hier_v2: topic_hits={len(topic_hits)} ep_hits={len(ep_hits)}")
  
-+        if use_visual_channel:
++        if use_visual_channel or characters or source_id:
 +            from hypervideo.retrieval.multimodal import retrieve_leaves
 +            selected = {eid for eid, _ in ep_hits} or topic_ep_ids
 +            has_clips = any(node.parent_episode_id in selected for node in hg.visual_clips.values())
-+            vr = _get_visual_retriever(visual_index_path, visual_server_url, required=True) if has_clips else None
++            vr = _get_visual_retriever(visual_index_path, visual_server_url, required=True) if has_clips and use_visual_channel else None
 +            evidence, parents, leaf_debug = await retrieve_leaves(
 +                hg, dual, query, ep_hits, topic_hits, top_k=top_k,
 +                allowed_episode_ids=topic_ep_ids, allowed_fact_ids=cand_fact_ids,
-+                use_visual_channel=True, visual_retriever=vr,
-+                score_prop=score_prop, min_visual_score=visual_min_score)
++                use_visual_channel=use_visual_channel, visual_retriever=vr,
++                score_prop=score_prop, min_visual_score=visual_min_score,
++                characters=characters, character_roles=character_roles, character_episode_ids=cand_ep_ids)
 +            return evidence, parents, debug+leaf_debug
 +
          # Stage C: 取这些 episode 的 fact 候选
          sub_fact_ids: Set[str] = set()
          fact_to_ep: Dict[str, str] = {}
-@@ -945,23 +940,6 @@ async def _retrieve_day_scoped(
+@@ -945,23 +953,6 @@ async def _retrieve_day_scoped(
              fact_hits = raw_fact_hits[:top_k]
              debug.append("hier_v2: no score_prop")
  
@@ -323,7 +417,7 @@ index 1d2b35e..2af6e56 100644
      elif mode == 'entity_pagerank_day':
          # HippoRAG-on-our-hypergraph (arXiv:2405.14831 思路, 但寄生在我们已有的
          # entity_canonical_name 字段上, 不新建图).
-@@ -1007,7 +985,7 @@ async def _retrieve_day_scoped(
+@@ -1007,7 +998,7 @@ async def _retrieve_day_scoped(
          f = indexed.facts_raw.get(fid)
          if not f:
              continue
@@ -332,7 +426,7 @@ index 1d2b35e..2af6e56 100644
          for eid in (f.get('episode_ids') or []):
              if eid in seen_ep_ids:
                  continue
-@@ -1030,6 +1008,8 @@ async def answer_one_question_multi_mode(
+@@ -1030,11 +1021,16 @@ async def answer_one_question_multi_mode(
      visual_index_path: Optional[str] = None,
      score_prop: str = 'none',
      use_visual_channel: bool = False,
@@ -341,12 +435,20 @@ index 1d2b35e..2af6e56 100644
      use_skills: bool = True,
      enable_visual_rewrite: bool = False,
      visual_rewrite_cfg: Optional[dict] = None,
-@@ -1101,13 +1081,15 @@ async def answer_one_question_multi_mode(
+     topic_top_n: int = 3,
+     ep_top_n: int = 0,
++    characters=None,
++    character_roles=None,
++    source_id=None,
+ ) -> Dict[str, dict]:
+     """多 mode 共享 Stage 1, 仅 Stage 2 各 mode 独立检索 + LLM 调用.
+ 
+@@ -1101,13 +1097,15 @@ async def answer_one_question_multi_mode(
      is_skill_candidate_qtype = (
          must_retrieve or qtype in ('Causal Reasoning',)
      )
 -    if is_skill_candidate_qtype:
-+    visual_modes = {m for m in retrieval_modes if m == 'hierarchical_v2_day' and use_visual_channel}
++    visual_modes = {m for m in retrieval_modes if m == 'hierarchical_v2_day' and (use_visual_channel or characters or source_id)}
 +    if is_skill_candidate_qtype and set(retrieval_modes)-visual_modes:
          try:
              fb_facts, fb_eps, _ = await _retrieve_day_scoped(
@@ -358,7 +460,7 @@ index 1d2b35e..2af6e56 100644
                  load_all_skills()
                  ctx = SkillContext(
                      item=item, question=question, question_type=qtype,
-@@ -1122,6 +1104,7 @@ async def answer_one_question_multi_mode(
+@@ -1122,6 +1120,7 @@ async def answer_one_question_multi_mode(
                  )
                  router_pred = await route_with_skills(ctx)
              else:
@@ -366,7 +468,7 @@ index 1d2b35e..2af6e56 100644
                  router_pred = await route_and_answer(
                      item, indexed, llm_cfg, target_day, cross_day,
                      fallback_facts=fb_facts, fallback_eps=fb_eps,
-@@ -1129,7 +1112,7 @@ async def answer_one_question_multi_mode(
+@@ -1129,7 +1128,7 @@ async def answer_one_question_multi_mode(
          except Exception as e:
              logger.warning(f"  router/skills failed: {e}")
  
@@ -375,7 +477,7 @@ index 1d2b35e..2af6e56 100644
          shared = {
              'answer': router_pred['answer'],
              'reasoning': router_pred['reasoning'],
-@@ -1144,7 +1127,7 @@ async def answer_one_question_multi_mode(
+@@ -1144,7 +1143,7 @@ async def answer_one_question_multi_mode(
          return {m: dict(shared, retrieval_mode=m) for m in retrieval_modes}
  
      # Router 没命中: 若 stage1 直答 -> 用 stage1; 否则走 stage2 检索
@@ -384,7 +486,7 @@ index 1d2b35e..2af6e56 100644
          shared_pred = {
              'answer': s1_decision.get('answer', ''),
              'reasoning': s1_decision.get('reasoning', ''),
-@@ -1158,6 +1141,14 @@ async def answer_one_question_multi_mode(
+@@ -1158,6 +1157,14 @@ async def answer_one_question_multi_mode(
  
      results: Dict[str, dict] = {}
      for mode in retrieval_modes:
@@ -399,13 +501,14 @@ index 1d2b35e..2af6e56 100644
          try:
              retrieved_facts, parent_eps, retrieval_debug = await _retrieve_day_scoped(
                  indexed, retrieval_query, target_day, cross_day,
-@@ -1165,12 +1156,16 @@ async def answer_one_question_multi_mode(
+@@ -1165,12 +1172,17 @@ async def answer_one_question_multi_mode(
                  visual_index_path=visual_index_path,
                  score_prop=score_prop,
                  use_visual_channel=use_visual_channel,
 +                visual_server_url=visual_server_url, visual_min_score=visual_min_score,
                  topic_top_n=topic_top_n,
                  ep_top_n=ep_top_n,
++                characters=characters, character_roles=character_roles, source_id=source_id,
              )
          except Exception as e:
              logger.error(f"  [{mode}] stage2 retrieve failed: {e}")
@@ -417,7 +520,7 @@ index 1d2b35e..2af6e56 100644
  
          # ---- (Pt2 v3) Visual rerank: LLM query rewrite + cosine threshold + VLM caption rewrite ----
          visual_rewrite_block = ""
-@@ -1183,6 +1178,8 @@ async def answer_one_question_multi_mode(
+@@ -1183,6 +1195,8 @@ async def answer_one_question_multi_mode(
                  reranks = await query_aware_visual_rerank(
                      query=retrieval_query,
                      candidate_episodes=parent_eps,
@@ -426,7 +529,7 @@ index 1d2b35e..2af6e56 100644
                      indexed=indexed,
                      visual_server_url=visual_rewrite_cfg["visual_server_url"],
                      visual_index_npz=visual_index_path,
-@@ -1238,9 +1235,17 @@ async def answer_one_question_multi_mode(
+@@ -1238,9 +1252,17 @@ async def answer_one_question_multi_mode(
              'retrieval_debug': retrieval_debug,
              'retrieved': [
                  {
@@ -446,7 +549,7 @@ index 1d2b35e..2af6e56 100644
                  }
                  for f in retrieved_facts
              ],
-@@ -1423,10 +1428,10 @@ def main():
+@@ -1423,10 +1445,10 @@ def main():
      parser.add_argument('--max_questions', type=int, default=0,
          help=">0 时只跑前 N 题 (调试). 默认 0 = 全部")
      parser.add_argument('--stage2_top_k', type=int, default=12)
@@ -459,7 +562,7 @@ index 1d2b35e..2af6e56 100644
               "多 mode 时 Stage1 共享, 每题 Stage2 各 mode 独立检索/答题, "
               "输出 <out_path>.<mode>.json 4份")
      parser.add_argument('--visual_index_path', type=str, default="${GROVE_WORK}/all_results/mmlifelong_week_full_bg/shared_hyper/visual_index_d12.npz",
-@@ -1435,7 +1440,7 @@ def main():
+@@ -1435,19 +1457,22 @@ def main():
          choices=['none', 'mult', 'additive', 'rrf'],
          help="hierarchical_v2_day mode 跨层得分传递: none(默认, 兼容当前) / "
               "mult (fact×ep×topic) / additive (α·fact+β·ep+γ·topic) / rrf")
@@ -468,7 +571,10 @@ index 1d2b35e..2af6e56 100644
          help="hierarchical_v2_day mode 是否启用 visual_clip 通道 (需 hypergraph 含 visual_clips)")
      parser.add_argument('--answer_model', type=str, default='gpt-5.4-mini',
          help="LLM (Stage1+Stage2 都用). 候选: gpt-4.1-mini / gpt-4o / gpt-4.1")
-@@ -1443,11 +1448,11 @@ def main():
++    parser.add_argument('--character', action='append', default=[], help='Character ID/registered name; repeat for union recall')
++    parser.add_argument('--character_role', action='append', choices=['visible','speaker','referenced'])
++    parser.add_argument('--source_id', help='Restrict evidence to one recording/source')
+     parser.add_argument('--use_skills', action='store_true', default=True,
          help="启用插件式 skills 系统 (counting/temporal/causal 各自走专用路径). 默认 True.")
      parser.add_argument('--no_skills', dest='use_skills', action='store_false',
          help="禁用 skills 系统, 走旧版 mmlifelong_week_router.route_and_answer.")
@@ -483,7 +589,7 @@ index 1d2b35e..2af6e56 100644
      parser.add_argument('--vlm_rewrite_base_url', type=str,
          default=os.environ.get('VLLM_BASE_URL', 'http://10.0.0.3:8000/v1'),
          help="(Pt2) 远程 VLM (rewrite caption 用), OpenAI-compatible")
-@@ -1482,6 +1487,16 @@ def main():
+@@ -1482,6 +1507,16 @@ def main():
                          help="答题 prompt 加入身份消歧(JAKE=camera-wearer, who题答他人外貌); 默认关闭=原行为")
      args = parser.parse_args()
  
@@ -500,7 +606,7 @@ index 1d2b35e..2af6e56 100644
      # 应用身份消歧开关到模块级 (答题 prompt 选择 _stage1/2_prompt 时读取)
      global USE_IDENTITY_DISAMBIG
      USE_IDENTITY_DISAMBIG = bool(args.identity_disambig)
-@@ -1580,6 +1595,8 @@ def main():
+@@ -1580,11 +1615,14 @@ def main():
                      visual_index_path=args.visual_index_path,
                      score_prop=args.score_prop,
                      use_visual_channel=args.use_visual_channel,
@@ -509,12 +615,55 @@ index 1d2b35e..2af6e56 100644
                      use_skills=args.use_skills,
                      enable_visual_rewrite=args.enable_visual_rewrite,
                      visual_rewrite_cfg=visual_rewrite_cfg,
+                     topic_top_n=args.topic_top_n,
+                     ep_top_n=args.ep_top_n,
++                    characters=args.character, character_roles=args.character_role, source_id=args.source_id,
+                 )
+             )
+         except Exception as e:
+diff --git a/hypervideo/modules/character_cache.py b/hypervideo/modules/character_cache.py
+new file mode 100644
+index 0000000..7687a54
+--- /dev/null
++++ b/hypervideo/modules/character_cache.py
+@@ -0,0 +1,31 @@
++"""Content-addressed text cache guard for graphs with character projections."""
++import json
++import os
++from pathlib import Path
++from .character_projection import text_fingerprint
++
++
++async def ensure_character_text_index(owner):
++    """False preserves ordinary Grove's cache path; character graphs require exact content."""
++    hg = owner.hypergraph_builder.hypergraph
++    if not hg.character_catalog: return False
++    version = text_fingerprint(hg)
++    if getattr(owner, '_character_text_version', None) == version:
++        owner.hypergraph_builder.mark_index_clean()
++        return True
++    marker = Path(owner.working_dir)/'character_text_index.json'
++    try:
++        metadata = json.loads(marker.read_text())
++        if metadata['fingerprint'] != version: raise ValueError('text content changed')
++        owner.dual_index.load(owner.working_dir, owner.hyper_config)
++    except (OSError, ValueError, KeyError, TypeError):
++        # Remove marker first: failed saves must never bless partial cache files.
++        marker.unlink(missing_ok=True)
++        await owner.dual_index.rebuild(hg)
++        owner.dual_index.save(owner.working_dir, owner.hyper_config)
++        temp = marker.with_suffix('.tmp')
++        temp.write_text(json.dumps({'fingerprint': version}))
++        os.replace(temp, marker)
++    owner._character_text_version = version
++    owner.hypergraph_builder.mark_index_clean()
++    return True
 diff --git a/hypervideo/modules/character_identity.py b/hypervideo/modules/character_identity.py
 new file mode 100644
-index 0000000..001f90e
+index 0000000..a81b6f9
 --- /dev/null
 +++ b/hypervideo/modules/character_identity.py
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,246 @@
 +"""Optional experiment: resolve identity after boundary selection, before summarization.
 +
 +The provider owns inference/evidence. This module never infers identity from names,
@@ -532,12 +681,24 @@ index 0000000..001f90e
 +CHARACTER = re.compile(r'<person:[^<>]+>')
 +
 +
++def capture_direct(text, evidence):
++    """Freeze support for direct character tokens before identities can merge/split."""
++    bindings = evidence.setdefault('direct_bindings', {})
++    for token in CHARACTER.findall(text):
++        ids = list(dict.fromkeys(oid for row in evidence['feature_mapping'].values()
++            if f"<{row['character_id']}>" == token for oid in row.get('identity_observation_ids', [])))
++        if ids:
++            bindings.setdefault(token, ids)
++
++
 +def rewrite_text(text, evidence):
 +    """Replace whole feature tokens using this episode's versioned mapping."""
 +    if not evidence:
 +        return text
 +    mapping = evidence['feature_mapping']
 +    allowed = {f"<{row['character_id']}>" for row in mapping.values() if row['character_id']}
++    direct = evidence.get('direct_renderings', {})
++    allowed.update(direct)
 +    if any(tag not in allowed for tag in CHARACTER.findall(text)):
 +        raise ValueError('writer invented a character ID')
 +    def replace(match):
@@ -546,6 +707,7 @@ index 0000000..001f90e
 +            raise ValueError('text references an unknown face/voice tag')
 +        person = mapping[tag]['character_id']
 +        return f'<{person}>' if person else '<unknown>'
++    text = CHARACTER.sub(lambda m: direct.get(m.group(), m.group()), text)
 +    return FEATURE.sub(replace, text)
 +
 +
@@ -564,7 +726,9 @@ index 0000000..001f90e
 +    for ref in refs:
 +        tag = ref.get('feature_id')
 +        if tag is not None and (tag not in mapping or mapping[tag]['modality'] != 'voice' or
-+                                mapping[tag]['character_id'] != ref['character_id']):
++                                (mapping[tag]['character_id'] != ref['character_id'] and
++                                 not (mapping[tag].get('binding_status') == 'ambiguous' and
++                                      ref['character_id'] in mapping[tag]['candidate_character_ids']))):
 +            raise ValueError('speaker reference and character mapping disagree')
 +    seen = set()
 +    for row in evidence['memories']:
@@ -596,6 +760,9 @@ index 0000000..001f90e
 +    if not evidence:
 +        return result
 +    evidence['writer_summary_raw'] = copy.deepcopy(result)
++    for value in result.values():
++        for text in value if isinstance(value, list) else [value]:
++            if isinstance(text, str): capture_direct(text, evidence)
 +    result = copy.deepcopy(result)
 +    for key in ('summary', 'subject', 'description'):
 +        if key in result:
@@ -638,9 +805,11 @@ index 0000000..001f90e
 +    async def episode_evidence(self, start, end):
 +        snapshot = self._snapshot(start, end)
 +        refs = await self(start, end)
-+        return dict(character_refs=refs, graph_revision=snapshot['graph_revision'],
-+                    identity_evidence=validate_evidence(snapshot.get('identity_evidence', {}),
-+                                                        refs, snapshot['graph_revision']))
++        evidence = validate_evidence(snapshot.get('identity_evidence', {}), refs, snapshot['graph_revision'])
++        if evidence and 'identity_state' in snapshot:
++            evidence['projection_input'] = {k: copy.deepcopy(snapshot[k]) for k in
++                ('identity_state', 'temporal_evidence', 'face_timeline_complete', 'source', 'start', 'end')}
++        return dict(character_refs=refs, graph_revision=snapshot['graph_revision'], identity_evidence=evidence)
 +
 +
 +def identity_context(refs, evidence=None):
@@ -696,14 +865,20 @@ index 0000000..001f90e
 +                raise ValueError('fact feature tag has no cited memory/utterance evidence')
 +            for tag in used_tags:
 +                value = evidence['feature_mapping'][tag]
-+                refs.append(dict(role='referenced', feature_id=tag,
++                ref = dict(role='referenced', feature_id=tag,
 +                    character_id=value['character_id'], evidence_ids=copy.deepcopy(value['evidence_ids']),
 +                    memory_ids=[mid for mid in memory_ids if tag in memories[mid]['feature_ids']],
-+                    graph_revision=evidence['graph_revision']))
++                    graph_revision=evidence['graph_revision'])
++                for key in ('identity_observation_ids', 'identity_state_id', 'binding_status', 'candidate_character_ids'):
++                    if key in value: ref[key] = copy.deepcopy(value[key])
++                refs.append(ref)
 +            selected = supported - {None}
 +            fact_evidence = dict(schema_version=1, graph_revision=evidence['graph_revision'],
 +                feature_mapping={tag: copy.deepcopy(evidence['feature_mapping'][tag]) for tag in sorted(selected)},
 +                memories=[copy.deepcopy(memories[mid]) for mid in memory_ids], raw_content=text)
++            capture_direct(text, fact_evidence)
++            if 'identity_state_id' in evidence:
++                fact_evidence['identity_state_id'] = evidence['identity_state_id']
 +        facts.append(VideoFact(fact_id=str(uuid4()), content=content,
 +                               episode_ids=[episode.episode_id], topic_id=topic_id,
 +                               character_refs=refs, identity_evidence=fact_evidence))
@@ -735,8 +910,336 @@ index 0000000..001f90e
 +            facts.extend(facts_from_response(json.loads(text), episode, topic.topic_id))
 +        return SimpleNamespace(facts=facts, roles={f.fact_id: 'core' for f in facts},
 +                               weights={f.fact_id: 1. for f in facts}, extraction_confidence=1.)
+diff --git a/hypervideo/modules/character_links.py b/hypervideo/modules/character_links.py
+new file mode 100644
+index 0000000..68d4cf3
+--- /dev/null
++++ b/hypervideo/modules/character_links.py
+@@ -0,0 +1,155 @@
++"""Pure identity projection/index contracts; also vendored into Grove unchanged."""
++import copy
++import hashlib
++import json
++import math
++
++
++def fingerprint(value):
++    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
++                                    separators=(',', ':'), allow_nan=False).encode()).hexdigest()
++
++
++def seal_state(payload):
++    state = copy.deepcopy(payload)
++    state.pop('state_id', None)
++    state['state_id'] = fingerprint(state)
++    return state
++
++
++def validate_state(state):
++    if state.get('schema_version') != 1 or seal_state(state)['state_id'] != state.get('state_id'):
++        raise ValueError('invalid identity state fingerprint/schema')
++
++
++def bind(ids, state):
++    ids = list(dict.fromkeys(ids))
++    if any(oid not in state['observations'] for oid in ids):
++        raise ValueError('identity state is missing original observations')
++    people = sorted({state['observations'][oid]['character_id'] for oid in ids})
++    return dict(identity_observation_ids=ids, character_id=people[0] if len(people)==1 else None,
++                candidate_character_ids=people, binding_status='resolved' if len(people)==1 else
++                ('ambiguous' if people else 'unknown'), graph_revision=state['revision'],
++                identity_state_id=state['state_id'])
++
++
++def rebind_ref(ref, state):
++    row = copy.deepcopy(ref)
++    ids = row.get('identity_observation_ids')
++    if ids is None:
++        if row.get('character_id') is not None:
++            raise ValueError('legacy character reference lacks immutable identity observation IDs')
++        ids = []
++    row.update(bind(ids, state))
++    return row
++
++
++def face_occurrences(rows, faces, *, episode_id, source, origin, duration):
++    """All clustered samples, not just gallery representatives; noise stays unknown."""
++    by_cluster = {f['cluster_id']: f for f in faces if 'cluster_id' in f}
++    result = []
++    for index, row in enumerate(rows):
++        time = float(row['timestamp'])
++        if not math.isfinite(time) or not 0 <= time < duration:
++            raise ValueError('face detection outside episode')
++        face = by_cluster.get(int(row['cluster_id']))
++        result.append(dict(id=f'{episode_id}:detection:{index}', source=source, role='visible',
++            start=origin+time, end=origin+time, sample=True, frame_id=row['frame_id'],
++            bounding_box=row['bounding_box'], cluster_id=int(row['cluster_id']),
++            identity_observation_ids=list(face.get('observation_ids', [face['observation_id']])) if face else [],
++            evidence_ids=[f'{episode_id}:detection:{index}'],
++            detection_score=row['extra_data']['face_detection_score']))
++    return result
++
++
++def validate_event(row, state):
++    if row['role'] not in ('visible', 'speaker') or not row['id'] or not row['source']:
++        raise ValueError('invalid temporal evidence identity/role')
++    if not all(math.isfinite(row[k]) for k in ('start', 'end')) or not 0 <= row['start'] <= row['end']:
++        raise ValueError('invalid temporal evidence range')
++    if (row['role']=='visible') != (row['start']==row['end']):
++        raise ValueError('visible evidence must be sampled points; speaker evidence needs duration')
++    for oid in row['identity_observation_ids']:
++        observation = state['observations'].get(oid)
++        if observation is None or observation['source'] != row['source']:
++            raise ValueError('temporal evidence observation/source mismatch')
++        if observation['modality'] != ('face' if row['role']=='visible' else 'voice'):
++            raise ValueError('temporal evidence modality mismatch')
++
++
++def project_clip(clip, events, state):
++    validate_state(state)
++    if (not clip.get('source') or not all(math.isfinite(clip[k]) for k in ('start','end'))
++            or not 0 <= clip['start'] < clip['end']):
++        raise ValueError('clip requires source and a positive time interval')
++    refs, seen = [], set()
++    for event in events:
++        if event['id'] in seen:
++            raise ValueError('duplicate temporal evidence ID')
++        seen.add(event['id'])
++        validate_event(event, state)
++        if event['source'] != clip['source']:
++            continue
++        a, b = event['start'], event['end']
++        if a == b:
++            if not clip['start'] <= a < clip['end']:
++                continue
++        else:
++            a, b = max(a, clip['start']), min(b, clip['end'])
++            if a >= b:
++                continue
++        ref = dict(event, start=a, end=b, event_id=event['id'])
++        ref.update(bind(event['identity_observation_ids'], state))
++        refs.append(ref)
++    return sorted(refs, key=lambda r: (r['start'], r['role'], r['event_id']))
++
++
++def covered(clip, spans):
++    cursor = clip['start']
++    for a, b in sorted((s['start'], s['end']) for s in spans if s['source']==clip['source']):
++        if b <= cursor: continue
++        if a > cursor+1e-6: break
++        cursor = max(cursor, b)
++    return cursor >= clip['end']-1e-6
++
++
++def build_index(records, state):
++    validate_state(state)
++    postings, seen = {}, set()
++    for record in records:
++        key = record['node_type'], record['id']
++        if key in seen: raise ValueError('duplicate typed evidence node')
++        seen.add(key)
++        people = {}
++        for ref in record.get('character_refs', []):
++            rebound = rebind_ref(ref, state)
++            if any(ref.get(k) != rebound[k] for k in ('character_id', 'graph_revision', 'identity_state_id')):
++                raise ValueError('stale character reference; rebuild before indexing')
++            if ref['character_id']:
++                people.setdefault(ref['character_id'], set()).add(ref['role'])
++        for person, roles in people.items():
++            postings.setdefault(person, []).append(dict(node_type=key[0], id=key[1], roles=sorted(roles)))
++    return dict(schema_version=1, identity_state_id=state['state_id'], graph_revision=state['revision'],
++                records_fingerprint=fingerprint(records), postings=postings)
++
++
++def lookup(index, state, selectors, roles=None):
++    validate_state(state)
++    if index.get('identity_state_id') != state['state_id']:
++        raise ValueError('character index belongs to a different identity state')
++    resolved = set()
++    for selector in selectors:
++        if selector in state['aliases']:
++            resolved.add(state['aliases'][selector])
++        elif selector in state.get('names', {}):
++            resolved.update(bind(state['names'][selector], state)['candidate_character_ids'])
++        else:
++            raise ValueError(f'unknown character selector: {selector}')
++    matches = {}
++    for person in sorted(resolved):
++        for row in index['postings'].get(person, []):
++            if roles and not set(roles).intersection(row['roles']): continue
++            key = row['node_type'], row['id']
++            item = matches.setdefault(key, dict(row, matched_characters=[]))
++            item['matched_characters'].append(person)
++    return sorted(matches.values(), key=lambda r: (r['node_type'], r['id']))
+diff --git a/hypervideo/modules/character_projection.py b/hypervideo/modules/character_projection.py
+new file mode 100644
+index 0000000..1f0187b
+--- /dev/null
++++ b/hypervideo/modules/character_projection.py
+@@ -0,0 +1,161 @@
++"""Transactional, replayable character materialization over the real Grove graph."""
++import copy
++from .character_links import (bind, rebind_ref, project_clip, covered, build_index,
++                              fingerprint, lookup, validate_state, validate_event)
++from .character_identity import CHARACTER, rewrite_text, validate_evidence
++
++
++def evidence_records(hg):
++    """The index fingerprint includes scope and rendered text, not just node counts."""
++    records = []
++    for kind, nodes in [('fact', hg.facts), ('visual_clip', hg.visual_clips)]:
++        for _, node in sorted(nodes.items()):
++            parents = node.episode_ids or ([node.parent_episode_id] if kind=='visual_clip' else [])
++            scope = [dict(id=eid, source_id=hg.episodes[eid].source_id, day=hg.episodes[eid].day,
++                start=hg.episodes[eid].start_seconds, end=hg.episodes[eid].end_seconds) for eid in sorted(parents)]
++            records.append(dict(node_type=kind, parent_scope=scope, **node.model_dump(mode='json')))
++    return records
++
++
++def text_fingerprint(hg):
++    return fingerprint(dict(state=hg.character_catalog.get('state', {}).get('state_id'),
++        facts={k: n.model_dump(mode='json') for k,n in sorted(hg.facts.items())},
++        episodes={k: n.model_dump(mode='json') for k,n in sorted(hg.episodes.items())},
++        topics={k: n.model_dump(mode='json') for k,n in sorted(hg.topics.items())}))
++
++
++def _evidence(evidence, state):
++    result = copy.deepcopy(evidence)
++    if not result: return result
++    result.update(graph_revision=state['revision'], identity_state_id=state['state_id'])
++    for row in result['feature_mapping'].values():
++        row.update(rebind_ref(row, state))
++    result['direct_renderings'] = {}
++    for token, ids in result.get('direct_bindings', {}).items():
++        person = bind(ids, state)['character_id']
++        result['direct_renderings'][token] = f'<{person}>' if person else '<unknown>'
++    return result
++
++
++def rebuild_characters(hg, state, snapshots=()):
++    """Return a new graph only after every projection succeeds; caller swaps/saves it.
++
++    No inference is repeated. Old snapshots supply immutable observations, never old
++    character assignments. Incomplete legacy timelines remain explicitly incomplete.
++    """
++    validate_state(state)
++    result = type(hg).from_dict(hg.to_dict())
++    events = {e['id']: copy.deepcopy(e) for e in hg.character_catalog.get('events', [])}
++    spans = {s['episode_id']: copy.deepcopy(s) for s in hg.character_catalog.get('source_spans', [])}
++    inputs = list(snapshots)
++    inputs += [ep.identity_evidence['projection_input'] for ep in result.episodes.values()
++               if 'projection_input' in ep.identity_evidence]
++    for item in inputs:
++        matches = [ep for ep in result.episodes.values()
++                   if (not ep.source_id or ep.source_id == item['source']) and
++                   abs(ep.start_seconds-item['start'])<1e-6 and abs(ep.end_seconds-item['end'])<1e-6]
++        if len(matches) != 1: raise ValueError('projection requires one source-qualified episode')
++        ep = matches[0]
++        ep.source_id = item['source']
++        spans[ep.id] = dict(episode_id=ep.id, source=item['source'], start=item['start'],
++                           end=item['end'], complete=item['face_timeline_complete'])
++        for event in item['temporal_evidence']:
++            if event['source'] != item['source'] or not item['start'] <= event['start'] <= event['end'] <= item['end']:
++                raise ValueError('temporal evidence outside its source episode')
++            if event['id'] in events and events[event['id']] != event:
++                raise ValueError('immutable temporal evidence changed')
++            events[event['id']] = copy.deepcopy(event)
++    # Validate the timeline even before any visual windows have been built.
++    for event in events.values(): validate_event(event, state)
++    for ep in result.episodes.values():
++        ep.character_refs = [rebind_ref(ref, state) for ref in ep.character_refs]
++        ep.identity_evidence = _evidence(ep.identity_evidence, state)
++        if ep.identity_evidence:
++            ep.identity_evidence = validate_evidence(ep.identity_evidence, ep.character_refs, state['revision'])
++            if 'projection_input' in ep.identity_evidence:
++                ep.identity_evidence['projection_input']['identity_state'] = copy.deepcopy(state)
++            raw = ep.identity_evidence.get('writer_summary_raw', {})
++            for key, field in [('summary','summary'), ('subject','subject'), ('description','episode_description'),
++                               ('keywords','keywords')]:
++                if key in raw:
++                    value = raw[key]
++                    setattr(ep, field, [rewrite_text(t, ep.identity_evidence) for t in value]
++                            if isinstance(value, list) else rewrite_text(value, ep.identity_evidence))
++                elif CHARACTER.search(str(getattr(ep, field))):
++                    raise ValueError('legacy summary lacks raw identity evidence; rerun writer')
++    for fact in result.facts.values():
++        fact.character_refs = [rebind_ref(ref, state) for ref in fact.character_refs]
++        fact.identity_evidence = _evidence(fact.identity_evidence, state)
++        if fact.identity_evidence:
++            fact.identity_evidence = validate_evidence(fact.identity_evidence,
++                [r for r in fact.character_refs if r['role']=='speaker'], state['revision'])
++            fact.content = rewrite_text(fact.identity_evidence['raw_content'], fact.identity_evidence)
++        elif CHARACTER.search(fact.content):
++            raise ValueError('legacy fact lacks raw identity evidence; rerun writer')
++    from ..retrieval.multimodal import clip_record
++    for clip in result.visual_clips.values():
++        parent = result.episodes.get(clip.parent_episode_id)
++        if parent is None: raise ValueError('clip parent missing')
++        source = clip.source_id or parent.source_id
++        if not source: raise ValueError('clip source unknown; assign episode.source_id before projection')
++        if parent.source_id != source: raise ValueError('clip/episode source mismatch')
++        record = clip_record(clip, parent)
++        clip.source_id = source
++        clip.start_seconds, clip.end_seconds = record['start_seconds'], record['end_seconds']
++        window = dict(source=source, start=clip.start_seconds, end=clip.end_seconds)
++        clip.episode_ids = sorted(ep.id for ep in result.episodes.values() if ep.source_id==source and
++            ep.start_seconds < clip.end_seconds and ep.end_seconds > clip.start_seconds)
++        clip.character_refs = project_clip(window, list(events.values()), state)
++        caption_raw = clip.identity_evidence.get('caption_raw', clip.caption_text)
++        caption_bindings = copy.deepcopy(clip.identity_evidence.get('caption_bindings', {}))
++        if CHARACTER.search(caption_raw) and not caption_bindings:
++            old_state = hg.character_catalog.get('state', state)
++            old_refs = project_clip(window, list(events.values()), old_state)
++            for token in CHARACTER.findall(caption_raw):
++                ids = list(dict.fromkeys(oid for ref in old_refs if f"<{ref['character_id']}>"==token
++                                         for oid in ref['identity_observation_ids']))
++                if not ids: raise ValueError('clip caption character has no temporal identity evidence')
++                caption_bindings[token] = ids
++        clip.caption_text = CHARACTER.sub(lambda m: '<'+(bind(caption_bindings[m.group()], state)['character_id'] or 'unknown')+'>', caption_raw)
++        clip.identity_evidence = dict(identity_state_id=state['state_id'], graph_revision=state['revision'],
++            face_timeline_complete=covered(window, [s for s in spans.values() if s['complete']]),
++            caption_raw=caption_raw, caption_bindings=caption_bindings)
++    # Rebuild window edges to include every overlapping episode; retain canonical NPZ parent.
++    for ep in result.episodes.values():
++        ids = sorted(c.id for c in result.visual_clips.values() if ep.id in c.episode_ids)
++        if ids or ep.window_hyperedge_id:
++            result.add_episode_window_hyperedge(ep.window_hyperedge_id or 'character_windows:'+ep.id, ep.id, ids)
++    # Topic summaries are generated outside the evidence-aware writer. If they contain
++    # identity tokens, invalidate them instead of leaving incorrect IDs in text search.
++    changed = hg.character_catalog.get('state', {}).get('state_id') != state['state_id']
++    invalidated = list(hg.character_catalog.get('invalidated_topics', []))
++    if changed:
++        for topic in result.topics.values():
++            for field in ('title', 'summary', 'keywords'):
++                value = getattr(topic, field)
++                if CHARACTER.search(str(value)):
++                    if topic.id not in invalidated: invalidated.append(topic.id)
++                    setattr(topic, field, [CHARACTER.sub('<unknown>', t) for t in value]
++                        if isinstance(value, list) else CHARACTER.sub('<unknown>', value))
++    result.character_catalog = dict(state=copy.deepcopy(state), events=list(events.values()),
++        source_spans=list(spans.values()), invalidated_topics=invalidated)
++    result.character_index = build_index(evidence_records(result), state)
++    return result
++
++
++def refresh_characters(hg):
++    states = [ep.identity_evidence['projection_input']['identity_state'] for ep in hg.episodes.values()
++              if 'projection_input' in ep.identity_evidence]
++    if hg.character_catalog: states.append(hg.character_catalog['state'])
++    if not states: return hg
++    latest = max(states, key=lambda s: s['revision'])
++    if any(s['revision']==latest['revision'] and s['state_id']!=latest['state_id'] for s in states):
++        raise ValueError('conflicting identity branches; supply an explicit state to rebuild_characters')
++    return rebuild_characters(hg, latest)
++
++
++def character_hits(hg, selectors, roles=None):
++    if not hg.character_catalog: raise ValueError('character projections missing; rebuild first')
++    if hg.character_index.get('records_fingerprint') != fingerprint(evidence_records(hg)):
++        raise ValueError('stale character index; rebuild before retrieval')
++    return lookup(hg.character_index, hg.character_catalog['state'], selectors, roles)
 diff --git a/hypervideo/retrieval/hierarchical_retriever.py b/hypervideo/retrieval/hierarchical_retriever.py
-index fd576d3..1ffd064 100644
+index fd576d3..90c07b4 100644
 --- a/hypervideo/retrieval/hierarchical_retriever.py
 +++ b/hypervideo/retrieval/hierarchical_retriever.py
 @@ -6,12 +6,13 @@
@@ -786,16 +1289,27 @@ index fd576d3..1ffd064 100644
  
      async def retrieve(
          self,
-@@ -77,6 +84,8 @@ class HierarchicalRetriever:
+@@ -61,6 +68,9 @@ class HierarchicalRetriever:
+         current_time_span: Optional[str] = None,
+         mode: str = "hierarchical",
+         bm25_query: str = None,
++        characters=None,
++        character_roles=None,
++        source_id=None,
+     ) -> RetrievalResult:
+         """检索入口。
+ 
+@@ -77,6 +87,9 @@ class HierarchicalRetriever:
          Returns:
              RetrievalResult 包含 topics/episodes/facts
          """
-+        if self._config.use_visual_channel:
-+            return await self._retrieve_multimodal(query, current_time_span, mode, bm25_query)
++        if self._config.use_visual_channel or characters or source_id:
++            return await self._retrieve_multimodal(query, current_time_span, mode, bm25_query,
++                                                   characters, character_roles, source_id)
          result = RetrievalResult()
  
          # 冷启动：超图为空
-@@ -204,6 +213,60 @@ class HierarchicalRetriever:
+@@ -204,6 +217,66 @@ class HierarchicalRetriever:
          )
          return result
  
@@ -815,13 +1329,15 @@ index fd576d3..1ffd064 100644
 +                                                       remote_url=self._config.visual_server_url))
 +        return self._visual_cache[1]
 +
-+    async def _retrieve_multimodal(self, query, current_time_span, mode, bm25_query):
++    async def _retrieve_multimodal(self, query, current_time_span, mode, bm25_query,
++                                   characters=None, character_roles=None, source_id=None):
 +        from .multimodal import retrieve_leaves, clip_record
 +        if mode not in ('hierarchical', 'episode_fact', 'fact_only'):
 +            raise ValueError('unsupported multimodal retrieval mode')
 +        hg = self._hypergraph
 +        cutoff = parse_frame_time_to_seconds(current_time_span, 'end') if current_time_span else None
-+        allowed = {eid for eid, ep in hg.episodes.items() if cutoff is None or ep.end_seconds <= cutoff}
++        allowed = {eid for eid, ep in hg.episodes.items() if (cutoff is None or ep.end_seconds <= cutoff)
++                   and (source_id is None or ep.source_id == source_id)}
 +        topics, episodes = [], []
 +        candidates = set(allowed)
 +        if mode == 'hierarchical' and hg.topics:
@@ -840,15 +1356,19 @@ index fd576d3..1ffd064 100644
 +        has_clips = any(n.parent_episode_id in selected and (cutoff is None or
 +            clip_record(n, hg.episodes[n.parent_episode_id])['end_seconds'] <= cutoff)
 +            for n in hg.visual_clips.values())
-+        vr = self._get_visual_retriever() if has_clips else None
++        vr = self._get_visual_retriever() if has_clips and self._config.use_visual_channel else None
 +        # A multi-episode fact must not expose content from a future episode.
 +        facts = {fid for fid, node in hg.facts.items()
-+                 if cutoff is None or all(eid in allowed for eid in node.episode_ids)}
++                 if (cutoff is None and source_id is None) or all(eid in allowed for eid in node.episode_ids)}
 +        evidence, parents, debug = await retrieve_leaves(hg, self._dual_index, query, episodes, topics,
 +            top_k=self._config.fact_top_k, allowed_episode_ids=candidates, allowed_fact_ids=facts,
 +            visual_retriever=vr, score_prop=self._config.retrieval_score_propagation,
-+            min_visual_score=self._config.visual_min_score, bm25_query=bm25_query, cutoff_seconds=cutoff)
-+        return RetrievalResult(topics=topics, episodes=episodes or [(p['id'], 0.) for p in parents],
++            min_visual_score=self._config.visual_min_score, bm25_query=bm25_query, cutoff_seconds=cutoff,
++            use_visual_channel=self._config.use_visual_channel, characters=characters,
++            character_roles=character_roles, character_episode_ids=allowed)
++        parent_hits = dict(episodes)
++        for parent in parents: parent_hits.setdefault(parent['id'], 0.)
++        return RetrievalResult(topics=topics, episodes=list(parent_hits.items()),
 +            facts=[(r['id'], r['score']) for r in evidence if r['node_type'] == 'fact'],
 +            visual_clips=[(r['id'], r['score']) for r in evidence if r['node_type'] == 'visual_clip'],
 +            evidence=evidence, debug=debug)
@@ -856,7 +1376,7 @@ index fd576d3..1ffd064 100644
      def _filter_facts_by_time(self, fact_ids: Set[str], cutoff_sec: float) -> Set[str]:
          """fact_only 模式专用: 通过 fact 关联的 episode 做时间过滤。
          如果 fact 没绑定 episode 或所有 episode 都已过 cutoff, 则丢弃。
-@@ -261,8 +324,12 @@ class HierarchicalRetriever:
+@@ -261,8 +334,12 @@ class HierarchicalRetriever:
          """
          parts = []
  
@@ -873,10 +1393,10 @@ index fd576d3..1ffd064 100644
                  fact_node = self._hypergraph.get_fact(fid)
 diff --git a/hypervideo/retrieval/multimodal.py b/hypervideo/retrieval/multimodal.py
 new file mode 100644
-index 0000000..0a0fdae
+index 0000000..caf2ed3
 --- /dev/null
 +++ b/hypervideo/retrieval/multimodal.py
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,203 @@
 +"""Shared leaf retrieval: facts and visual clips retain their type and provenance."""
 +from __future__ import annotations
 +
@@ -895,7 +1415,9 @@ index 0000000..0a0fdae
 +            or not start < end or end <= episode.start_seconds or start >= episode.end_seconds):
 +        raise ValueError('visual clip time/day does not overlap its parent episode')
 +    return dict(id=node.id, node_type='visual_clip', clip_id=node.id,
-+                episode_ids=[node.parent_episode_id], parent_episode_id=node.parent_episode_id,
++                episode_ids=node.episode_ids or [node.parent_episode_id], parent_episode_id=node.parent_episode_id,
++                source_id=node.source_id, character_refs=node.character_refs,
++                identity_evidence=node.identity_evidence,
 +                day=node.day, start_seconds=start, end_seconds=end,
 +                temporal=node.frame_time_span, frame_time_span=node.frame_time_span,
 +                caption_text=node.caption_text, content=node.caption_text)
@@ -912,12 +1434,14 @@ index 0000000..0a0fdae
 +            ids = edge.relation.keys()
 +        else:
 +            # Imported graphs may carry only the reverse parent link.
-+            ids = [cid for cid, node in hg.visual_clips.items() if node.parent_episode_id == eid]
++            ids = [cid for cid, node in hg.visual_clips.items() if eid in (node.episode_ids or [node.parent_episode_id])]
 +        for cid in ids:
 +            node = hg.visual_clips.get(cid)
-+            if node is None or node.parent_episode_id != eid:
++            if node is None or eid not in (node.episode_ids or [node.parent_episode_id]):
 +                raise ValueError('window hyperedge references a missing clip or a different parent')
-+            records[cid] = clip_record(node, ep)
++            record = clip_record(node, ep)
++            record['episode_ids'] = sorted(set(record['episode_ids']) & set(episode_ids))
++            records[cid] = record
 +    return records
 +
 +
@@ -929,7 +1453,8 @@ index 0000000..0a0fdae
 +    """
 +    if score_prop not in ('none', 'mult', 'additive', 'rrf'):
 +        raise ValueError('invalid score propagation mode')
-+    scores = {(r['node_type'], r['id']): 1/(60+r['channel_rank']) for r in records}
++    scores = {(r['node_type'], r['id']): 1/(60+r['channel_rank']) if r.get('semantic_hit', True) else 0.
++              for r in records}
 +    ep_scores, topic_scores = dict(episode_hits), dict(topic_hits)
 +    parents = {(r['node_type'], r['id']): max(r['episode_ids'],
 +               key=lambda eid: (ep_scores.get(eid, 0), eid), default='') for r in records}
@@ -943,14 +1468,16 @@ index 0000000..0a0fdae
 +                    parents, {key: i for i, (key, _) in enumerate(episode_hits)}, episode_to_topic,
 +                    {key: i for i, (key, _) in enumerate(topic_hits)})
 +    for row in records:
-+        row['score'] = scores[(row['node_type'], row['id'])]
++        score = scores[(row['node_type'], row['id'])] if row.get('semantic_hit', True) else 0.
++        row['score'] = score + (1/60 if row.get('matched_characters') else 0.)
 +    return sorted(records, key=lambda r: (-r['score'], r['channel_rank'], r['node_type'], r['id']))[:top_k]
 +
 +
 +async def retrieve_leaves(hg, dual, query, episode_hits, topic_hits, *, top_k,
 +                          allowed_episode_ids, allowed_fact_ids=None, visual_retriever=None,
 +                          use_visual_channel=True, score_prop='none', min_visual_score=None,
-+                          bm25_query=None, cutoff_seconds=None):
++                          bm25_query=None, cutoff_seconds=None, characters=None, character_roles=None,
++                          character_episode_ids=None):
 +    """Filter graph scope before scoring. A visual hit never requires a fact hit."""
 +    if top_k < 1:
 +        raise ValueError('top_k must be positive')
@@ -1023,6 +1550,36 @@ index 0000000..0a0fdae
 +                records.append(row)
 +        else:
 +            debug.append('visual channel has no clips in selected episodes')
++    for row in records:
++        row['retrieval_channels'] = ['visual' if row['node_type']=='visual_clip' else 'text']
++    if characters:
++        from ..modules.character_projection import character_hits
++        scope = set(character_episode_ids if character_episode_ids is not None else allowed_episode_ids) & hg.episodes.keys()
++        if cutoff_seconds is not None:
++            scope = {eid for eid in scope if hg.episodes[eid].end_seconds <= cutoff_seconds}
++        existing = {(r['node_type'], r['id']): r for r in records}
++        for hit in character_hits(hg, characters, character_roles):
++            kind, nid = hit['node_type'], hit['id']
++            if kind=='visual_clip':
++                if not use_visual_channel: continue
++                node = hg.visual_clips[nid]
++                row = clip_record(node, hg.episodes[node.parent_episode_id])
++                if cutoff_seconds is not None and row['end_seconds'] > cutoff_seconds: continue
++                row['episode_ids'] = sorted(set(row['episode_ids']) & scope)
++            else:
++                if allowed_fact_ids is not None and nid not in allowed_fact_ids: continue
++                node = hg.facts[nid]
++                if not set(node.episode_ids).issubset(scope): continue
++                row = dict(node.model_dump(mode='json'), node_type='fact', fact_id=nid)
++            if not row['episode_ids']: continue
++            key = kind, nid
++            if key not in existing:
++                row.update(raw_score=None, channel_rank=0, semantic_hit=False, retrieval_channels=[])
++                existing[key] = row
++                records.append(row)
++            existing[key]['matched_characters'] = hit['matched_characters']
++            existing[key]['retrieval_channels'].append('character')
++        debug.append(f'character_scope_episodes={len(scope)}')
 +    evidence = rank_evidence(records, episode_hits, topic_hits, episode_to_topic, top_k, score_prop)
 +    parent_ids = list(dict.fromkeys(eid for row in evidence for eid in row['episode_ids']))
 +    parents = [hg.episodes[eid].model_dump(mode='json') for eid in parent_ids]
@@ -1038,10 +1595,13 @@ index 0000000..0a0fdae
 +        content = row.get('content') or row.get('caption_text') or '(no stored caption; inspect the clip)'
 +        location = row.get('frame_time_span') or row.get('temporal') or ''
 +        parents = ','.join(row.get('episode_ids', []))
-+        lines.append(f"[{kind}:{row.get('id', '')}] [{location}] [episodes={parents}] {content[:max_chars]}")
++        identities = sorted({f"{ref['role']}={ref['character_id'] or 'unknown'}"
++                             for ref in row.get('character_refs', [])})
++        labels = '[characters: '+ '; '.join(identities)+'] ' if identities else ''
++        lines.append(f"[{kind}:{row.get('id', '')}] [{location}] [episodes={parents}] {labels}{content[:max_chars]}")
 +    return '\n'.join(lines) if lines else '(no evidence retrieved)'
 diff --git a/hypervideo/structure.py b/hypervideo/structure.py
-index ebd7c93..af61096 100644
+index ebd7c93..6a7c875 100644
 --- a/hypervideo/structure.py
 +++ b/hypervideo/structure.py
 @@ -60,6 +60,9 @@ class VideoFactNode(BaseModel):
@@ -1072,7 +1632,15 @@ index ebd7c93..af61096 100644
              episode_ids=self.episode_ids,
              topic_id=self.topic_id,
              confidence=self.confidence,
-@@ -172,6 +179,9 @@ class VideoEpisodeNode(BaseModel):
+@@ -162,6 +169,7 @@ class FactHyperedge(BaseModel):
+ class VideoEpisodeNode(BaseModel):
+     """L2 层 Episode 节点"""
+     id: str = Field(..., description="Episode 唯一标识")
++    source_id: str = ""
+     time_span: str = Field(default="", description="时间范围，如 1-11:09:26-11:15:00")
+     start_seconds: float = Field(default=0.0, description="开始绝对秒数")
+     end_seconds: float = Field(default=0.0, description="结束绝对秒数")
+@@ -172,6 +180,9 @@ class VideoEpisodeNode(BaseModel):
      keywords: Optional[List[str]] = Field(default=None, description="关键词")
      episode_description: Optional[str] = Field(default=None, description="详细描述")
  
@@ -1082,7 +1650,14 @@ index ebd7c93..af61096 100644
      # 超图结构字段
      hyperedge: Dict[str, str] = Field(
          default_factory=dict,
-@@ -191,6 +201,8 @@ class VideoEpisodeNode(BaseModel):
+@@ -185,12 +196,15 @@ class VideoEpisodeNode(BaseModel):
+                            hyperedge: Optional[Dict[str, str]] = None) -> "VideoEpisodeNode":
+         return cls(
+             id=episode.episode_id,
++            source_id=episode.source_id,
+             time_span=episode.time_span,
+             start_seconds=episode.start_seconds,
+             end_seconds=episode.end_seconds,
              day=episode.day,
              frame_captions=[fc.to_dict() for fc in episode.frame_captions],
              summary=episode.summary,
@@ -1091,7 +1666,14 @@ index ebd7c93..af61096 100644
              subject=episode.subject,
              keywords=episode.keywords,
              episode_description=episode.episode_description,
-@@ -208,6 +220,8 @@ class VideoEpisodeNode(BaseModel):
+@@ -202,12 +216,15 @@ class VideoEpisodeNode(BaseModel):
+         fcs = [FrameCaption.from_dict(fc) for fc in self.frame_captions]
+         return VideoEpisode(
+             episode_id=self.id,
++            source_id=self.source_id,
+             time_span=self.time_span,
+             start_seconds=self.start_seconds,
+             end_seconds=self.end_seconds,
              day=self.day,
              frame_captions=fcs,
              summary=self.summary or "",
@@ -1100,20 +1682,67 @@ index ebd7c93..af61096 100644
              subject=self.subject or "",
              keywords=self.keywords or [],
              episode_description=self.episode_description or "",
+@@ -267,6 +284,10 @@ class VideoTopicNode(BaseModel):
+ class VisualClipNode(BaseModel):
+     """L4 视觉片段节点: 一个 5s 窗口的视觉 embedding + 复用 frame_caption."""
+     id: str = Field(..., description="visual clip 唯一标识 (uuid)")
++    source_id: str = ""
++    episode_ids: List[str] = Field(default_factory=list)
++    character_refs: List[Dict[str, Any]] = Field(default_factory=list)
++    identity_evidence: Dict[str, Any] = Field(default_factory=dict)
+     day: int = Field(..., description="所属 day (1..7)")
+     start_seconds: float = Field(..., description="绝对秒 (含 day offset 同 episode)")
+     end_seconds: float = Field(..., description="同上")
+@@ -307,6 +328,8 @@ class VideoHypergraph(BaseModel):
+     topics: Dict[str, VideoTopicNode] = Field(default_factory=dict)
+     visual_clips: Dict[str, VisualClipNode] = Field(default_factory=dict)
+     episode_window_hyperedges: Dict[str, EpisodeWindowHyperedge] = Field(default_factory=dict)
++    character_catalog: Dict[str, Any] = Field(default_factory=dict)
++    character_index: Dict[str, Any] = Field(default_factory=dict)
+ 
+     # EgoLife 积累事件日志（drink / sit_start/stop / phone_use_start/stop / session_gap）
+     # QA / HoloAssist 场景下保持空（但字段永远存在,避免 JSON 解析分支）。
+@@ -610,6 +633,8 @@ class VideoHypergraph(BaseModel):
+             "episode_window_hyperedges": {k: v.model_dump(mode="json") for k, v in self.episode_window_hyperedges.items()},
+             # EgoLife 积累事件(drink / sit / phone_use / session_gap), 其他数据集为空列表
+             "accumulative_events": list(self.accumulative_events),
++            "character_catalog": self.character_catalog,
++            "character_index": self.character_index,
+         }
+ 
+     @classmethod
+@@ -623,6 +648,8 @@ class VideoHypergraph(BaseModel):
+             visual_clips={k: VisualClipNode(**v) for k, v in data.get("visual_clips", {}).items()},
+             episode_window_hyperedges={k: EpisodeWindowHyperedge(**v) for k, v in data.get("episode_window_hyperedges", {}).items()},
+             accumulative_events=list(data.get("accumulative_events", [])),
++            character_catalog=data.get('character_catalog', {}),
++            character_index=data.get('character_index', {}),
+         )
+ 
+     def save(self, filepath: str):
 diff --git a/hypervideo/types.py b/hypervideo/types.py
-index e95e6d0..4dfd8e3 100644
+index e95e6d0..e0fb10d 100644
 --- a/hypervideo/types.py
 +++ b/hypervideo/types.py
-@@ -152,6 +152,8 @@ class VideoEpisode:
+@@ -152,6 +152,9 @@ class VideoEpisode:
      subject: str = ""           # 主题标题（如"在厨房泡茶"）
      keywords: List[str] = field(default_factory=list)
      episode_description: str = ""
++    source_id: str = ""
 +    character_refs: List[Dict[str, Any]] = field(default_factory=list)
 +    identity_evidence: Dict[str, Any] = field(default_factory=dict)
  
      def __post_init__(self):
          if not self.episode_id:
-@@ -183,6 +185,8 @@ class VideoEpisode:
+@@ -174,6 +177,7 @@ class VideoEpisode:
+     def to_dict(self) -> Dict[str, Any]:
+         return {
+             "episode_id": self.episode_id,
++            "source_id": self.source_id,
+             "time_span": self.time_span,
+             "start_seconds": self.start_seconds,
+             "end_seconds": self.end_seconds,
+@@ -183,6 +187,8 @@ class VideoEpisode:
              "subject": self.subject,
              "keywords": self.keywords,
              "episode_description": self.episode_description,
@@ -1122,7 +1751,7 @@ index e95e6d0..4dfd8e3 100644
          }
  
      @classmethod
-@@ -216,6 +220,8 @@ class VideoFact:
+@@ -216,6 +222,8 @@ class VideoFact:
      content: str                # 原子事实
      episode_ids: List[str] = field(default_factory=list)
      topic_id: str = ""
@@ -1131,7 +1760,7 @@ index e95e6d0..4dfd8e3 100644
      confidence: float = 0.8
      temporal: str = ""          # "DAY1-11:05:30" 时间点
      spatial: Optional[str] = None   # 位置
-@@ -263,6 +269,8 @@ class VideoFact:
+@@ -263,6 +271,8 @@ class VideoFact:
      def to_dict(self) -> Dict[str, Any]:
          return {
              "fact_id": self.fact_id,

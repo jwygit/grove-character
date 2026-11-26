@@ -15,6 +15,8 @@
 
 详细设计见 [实验设计](docs/DESIGN.md)，GPU/API 操作见 [运行手册](docs/RUNBOOK.md)，复用关系见 [代码来源](docs/PROVENANCE.md)，实际验证见 [测试记录](docs/VALIDATION.md)。
 
+已补齐 clip 的 `visible`/`speaker` 人物引用、人物反向索引与并行召回，以及身份合并/撤销后的正文和索引重建。独立命令、Grove 接口与升级方式见 [人物图与检索](docs/CHARACTER_GRAPH.md)。运行 `python scripts/smoke_characters.py runs/characters-smoke-new` 可检查修订前后的图与召回结果。
+
 ## Visual clip 联合检索
 
 已补齐 Grove `use_visual_channel` 的 TODO，并接到 `hierarchical_v2_day` 和核心 `HierarchicalRetriever`。visual clip 与 fact 分别检索后共享一个 top-k 列表，保留各自类型、ID、时间、父 episode 和分数；没有 fact 的 episode 也可返回视觉证据。视觉编码可调用远程 API，本机只计算 cosine。

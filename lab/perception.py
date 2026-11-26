@@ -97,7 +97,7 @@ def extract(video, speech, start, end, origin, source, episode_id, config, out, 
                 detection_score=row['extra_data']['face_detection_score'],
                 quality_score=row['extra_data']['face_quality_score'],
                 frame_id=row['frame_id'], bounding_box=row['bounding_box'], cluster_id=cluster_id))
-        faces.append(dict(id=face_id, observation_id=ids[0], observation_ids=ids,
+        faces.append(dict(id=face_id, cluster_id=int(cluster_id), observation_id=ids[0], observation_ids=ids,
                           image=images[0], images=images))
     if len(faces) > config.get('max_face_references', 24):
         raise ValueError('too many face clusters; shorten common episodes')
@@ -124,6 +124,10 @@ def extract(video, speech, start, end, origin, source, episode_id, config, out, 
                 start=origin+start+u['start'], end=origin+start+u['end'],
                 model=config['voice_model_id'], embedding=vector))
             u['voice_observation_id'] = obs_id
+    from .character_links import face_occurrences
+    timeline = face_occurrences(labeled, faces, episode_id=episode_id, source=source,
+                                origin=origin+start, duration=end-start)
     return dict(id=episode_id, source=source, time_origin=origin+start, duration=end-start,
+                face_occurrences=timeline, face_timeline_version=1,
                 video=str(clip.resolve()), faces=faces, utterances=turns, observations=observations,
                 voice_audio_sha256=digest(wav), source_audio_sha256=digest(source_wav), voice_pipeline_version=2)

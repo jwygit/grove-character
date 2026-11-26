@@ -25,6 +25,8 @@ def metadata():
 def main():
     parser = argparse.ArgumentParser(description='Independent speech / AV / Grove character experiments')
     sub = parser.add_subparsers(dest='command', required=True)
+    from .character_commands import add_commands
+    add_commands(sub)
     p = sub.add_parser('speech')
     p.add_argument('--video', required=True, type=Path)
     p.add_argument('--config', required=True, type=Path)
@@ -59,6 +61,10 @@ def main():
     for key in ('truth', 'snapshot', 'out'):
         p.add_argument('--'+key, required=True, type=Path)
     args = parser.parse_args()
+    if args.command in ('identity-review', 'project-clips', 'grove-project', 'character-lookup'):
+        from .character_commands import run
+        run(args)
+        return
     if args.command == 'speech':
         from .speech import infer
         args.out.mkdir(parents=True, exist_ok=False)

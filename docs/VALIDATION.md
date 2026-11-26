@@ -1,6 +1,10 @@
 # 实际验证记录
 
-日期：2026-11-25。环境：macOS，Python 3.13.9；隔离环境 NumPy 2.5.5、Pydantic 2.14.4、HDBSCAN 0.8.44、scikit-learn 1.9.1、SciPy 1.18.1。未运行任何 GPU 模型。
+日期：2026-11-26。环境：macOS，Python 3.13.9；隔离环境 NumPy 2.5.5、Pydantic 2.14.4、HDBSCAN 0.8.44、scikit-learn 1.9.1、SciPy 1.18.1。未运行任何 GPU 模型。
+
+人物图本次验证：129 项 CPU 测试通过（75 模块、54 Grove）。新增 31 项覆盖完整采样时刻、unknown、来源隔离、窗口交集、合并/撤销与歧义、版本哈希、反向索引、真实 writer 正文重建/图重载、跨 episode clips、人物绕过语义层级召回、日期/来源/cutoff、角色标签、文本缓存更新/保存失败、命令行重建及原图不被覆盖。`smoke_characters.py` 已生成修订前后图、2 个 clips、3 个 facts 及检索结果；使用合成观测、假 writer 和固定向量，不作为真实准确率。
+
+以下表格保留上一版 98 项测试的历史记录；本次部署复现结果记录在文末。
 
 | 验证 | 结果 | 可以说明什么 |
 |---|---|---|
@@ -36,3 +40,5 @@ Grove 新增测试执行实际边界 finalize → 取完整 M3 evidence → 摘�
 视觉检索更新：新增 23 项测试（7 项视觉索引、16 项 Grove 检索），完整 98 项 CPU 测试。覆盖真实 NPZ 与 cosine、候选先过滤再 top-k、各版 clip ID metadata、编码空间不匹配/服务故障、fact 与 visual clip 共享预算、无 fact 的视觉 episode、严格 day 范围、跨层传播、旧时间戳兼容、历史 cutoff、图超边一致性、Grove 保存/加载、核心 API 开关，以及 week retrieval 的 Stage 1 不能跳过视觉通道、结果类型和错误路径。文本索引/encoder/LLM 使用明确测试替身，未执行真实模型。
 
 `smoke_visual.py` 生成 2 个 fact + 2 个 visual_clip 的统一 evidence 和回答上下文，使用真实 Grove 图与 NumPy 检索；合成报告禁止用于模型选型。新版 CLI `--help` 可在没有 torch 的 CPU 环境读取；实际全 CLI 仍依赖上游缺失的文本索引/builder 模块，preflight 已增加相关报告。GPU/API、真实召回率、视觉答案忠实度仍未验证。
+
+2026-11-26 清洁部署复现：仅复制 Git 管理的项目文件及本次新增文件，不复制 venv/vendor/runs；从 bundle 离线还原并应用补丁。分别运行 75 项模块测试、54 项 Grove 测试，全部通过；`smoke.py`、`smoke_visual.py`、`smoke_characters.py` 三条均通过；16 个 Grove 修改文件与工作目录逐字节一致，所有修改文件及 lab/tests/scripts 的 Python 语法检查通过。两层 Git diff 空白检查通过；按文档设置 `PYTHONPATH=vendor/Grove` 后，week CLI help 正常展示人物参数。preflight 仍报告 full_grove_pipeline_ready=false，原因仍为上游缺失模块和未执行真实模型。
