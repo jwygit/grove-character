@@ -1,5 +1,7 @@
 # 来源与复用范围
 
+fact/clip 更新：新增本项目维护的 `lab/fact_evidence.py`，原样复制为 Grove `modules/fact_evidence.py`；新增 `fact_clips.py` 适配真实图节点与检索。视觉定位使用独立 `lab/visual_grounding.py` 多图 API 流程和实际解码 PTS，不改 M3 原始提示或聚类源码；定位提示、帧、媒体与部署版本进入 provenance。
+
 2026-11-26 人物图更新：新增 `lab/character_links.py` 纯投影/索引契约，逐字节复制到 Grove `modules/character_links.py`（测试检查一致），由本项目维护；不是 M3 原始实现。新增 Grove `character_projection.py` 和 `character_cache.py`，扩展原 writer、图类型、builder 和两条检索入口。`lab/identity_state.py` 继续复用原 `IdentityGraph` 的观测、确认/撤销和审计机制；未改 M3 的聚类源码或联合提示。
 
 视觉检索更新：在同一固定 Grove 副本中补齐 `mmlifelong_week_retrieval_v2.py` 的 Stage E TODO；新增共享的 `retrieval/multimodal.py`，复用 Grove 真实图节点、文本索引接口与跨层得分传递，接入 `HierarchicalRetriever`。改进 `visual_retriever.py` 的候选过滤、错误处理、远程 encoder 接口与索引校验；三个 `visual_indexing.py` 构建入口修正 day offset，现有可选 visual rerank 限定为已命中 clip。没有复制或伪造缺失的 BM25/embedding 索引与 GPU server 实现，具体范围见 VISUAL_RETRIEVAL.md。

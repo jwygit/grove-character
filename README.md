@@ -17,6 +17,8 @@
 
 已补齐 clip 的 `visible`/`speaker` 人物引用、人物反向索引与并行召回，以及身份合并/撤销后的正文和索引重建。独立命令、Grove 接口与升级方式见 [人物图与检索](docs/CHARACTER_GRAPH.md)。运行 `python scripts/smoke_characters.py runs/characters-smoke-new` 可检查修订前后的图与召回结果。
 
+进一步补齐 **fact→具体 clip 的证据关联**：语音沿用引用发言的时间，视觉通过独立 `ground-visual` 定位到时间段/实际帧；writer 引用后生成可重建的证据边，检索返回具体 clip 与时间。部署与独立测试见 [Fact/clip 证据说明](docs/FACT_CLIP_EVIDENCE.md)。M3 原始联合提示保持不变，无法定位的事件明确保留为未定位。
+
 ## Visual clip 联合检索
 
 已补齐 Grove `use_visual_channel` 的 TODO，并接到 `hierarchical_v2_day` 和核心 `HierarchicalRetriever`。visual clip 与 fact 分别检索后共享一个 top-k 列表，保留各自类型、ID、时间、父 episode 和分数；没有 fact 的 episode 也可返回视觉证据。视觉编码可调用远程 API，本机只计算 cosine。

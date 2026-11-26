@@ -1,5 +1,7 @@
 # 运行手册
 
+fact→clip 新流程：`associate → ground-visual → grove-write → 构建 clips → grove-link-clips`，详细命令及模型服务配置见 [FACT_CLIP_EVIDENCE.md](FACT_CLIP_EVIDENCE.md)。语音按已有发言时间对齐；仅视觉事件定位额外调用模型。升级需重新应用 Grove 补丁，旧 bundle 缺视频哈希时重新 perceive/associate。
+
 人物时间线、clip/fact 引用、并行人物召回及合并/撤销后的 CPU 重建命令见 [CHARACTER_GRAPH.md](CHARACTER_GRAPH.md)。升级时需重新应用 Grove 补丁；旧快照需要重新取证，不能从代表脸推算出现时间。
 
 visual clip 与 fact 联合检索的启用配置、API 协议和验证步骤见 [VISUAL_RETRIEVAL.md](VISUAL_RETRIEVAL.md)。

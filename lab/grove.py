@@ -81,6 +81,9 @@ async def write_episode(episode_data, snapshot, llm, output):
     if 'identity_state' in snapshot:
         from hypervideo.modules.character_projection import rebuild_characters
         graph = rebuild_characters(graph, snapshot['identity_state'], [snapshot])
+    else:
+        from hypervideo.modules.fact_clips import rebuild_fact_clips
+        graph = rebuild_fact_clips(graph)
     # This isolated writer intentionally does not simulate topic aggregation/retrieval.
     graph.save(str(output))
     restored = VideoHypergraph.load(str(output))

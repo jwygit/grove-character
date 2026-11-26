@@ -1,0 +1,9 @@
+{
+  "endpoint": "http://127.0.0.1:8000/v1/chat/completions",
+  "model": "SET_VISION_MODEL_ID",
+  "model_revision": "SET_WEIGHTS_REVISION_OR_HASH",
+  "api_key_env": "VLM_API_KEY",
+  "sample_fps": 1,
+  "max_frames": 120,
+  "timeout": 300
+}

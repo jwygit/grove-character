@@ -129,5 +129,5 @@ def extract(video, speech, start, end, origin, source, episode_id, config, out, 
                                 origin=origin+start, duration=end-start)
     return dict(id=episode_id, source=source, time_origin=origin+start, duration=end-start,
                 face_occurrences=timeline, face_timeline_version=1,
-                video=str(clip.resolve()), faces=faces, utterances=turns, observations=observations,
+                video=str(clip.resolve()), episode_video_sha256=digest(clip), faces=faces, utterances=turns, observations=observations,
                 voice_audio_sha256=digest(wav), source_audio_sha256=digest(source_wav), voice_pipeline_version=2)

@@ -27,6 +27,9 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     from .character_commands import add_commands
     add_commands(sub)
+    p = sub.add_parser('ground-visual')
+    for key in ('bundle', 'snapshot', 'config', 'out'):
+        p.add_argument('--'+key, required=True, type=Path)
     p = sub.add_parser('speech')
     p.add_argument('--video', required=True, type=Path)
     p.add_argument('--config', required=True, type=Path)
@@ -61,11 +64,24 @@ def main():
     for key in ('truth', 'snapshot', 'out'):
         p.add_argument('--'+key, required=True, type=Path)
     args = parser.parse_args()
-    if args.command in ('identity-review', 'project-clips', 'grove-project', 'character-lookup'):
+    if args.command in ('identity-review', 'project-clips', 'grove-project', 'character-lookup', 'align-facts', 'grove-link-clips'):
         from .character_commands import run
         run(args)
         return
-    if args.command == 'speech':
+    if args.command == 'ground-visual':
+        from .visual_grounding import run_grounding
+        snapshot=read(args.snapshot)
+        if snapshot.get('bundle_sha256') != digest(args.bundle):
+            raise ValueError('grounding requires the exact association bundle')
+        args.out.mkdir(parents=True, exist_ok=False)
+        try:
+            result=run_grounding(read(args.bundle), snapshot, read(args.config), args.out)
+            result['visual_grounding']['input_file_sha256']=digest(args.snapshot)
+            write(args.out/'snapshot.json', result)
+        except Exception as error:
+            write(args.out/'failure.json', dict(status='failed',error_type=type(error).__name__,error=str(error)))
+            raise
+    elif args.command == 'speech':
         from .speech import infer
         args.out.mkdir(parents=True, exist_ok=False)
         config = read(args.config)

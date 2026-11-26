@@ -1,5 +1,7 @@
 # 人物引用、并行召回与身份修订
 
+现在还支持独立的 fact→evidence→clip 边，语音时间与视觉定位不会从人物共现推断，见 [FACT_CLIP_EVIDENCE.md](FACT_CLIP_EVIDENCE.md)。人物图修订会保留这些原始时间证据并重建 clip 引用。
+
 补齐三项：完整检测时间线到 clip 的人物引用；character → clip/fact 反向索引与并行召回；身份合并/撤销后的正文、引用和索引重建。模型与 M3 聚类/声纹策略沿用原实验，新增部分不调用模型。
 
 ## 数据流

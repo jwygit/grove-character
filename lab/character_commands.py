@@ -9,6 +9,10 @@ from .identity_state import review_identity
 
 
 def add_commands(sub):
+    p = sub.add_parser('align-facts')
+    for name in ('facts','clips','out'): p.add_argument('--'+name,type=Path,required=True)
+    p = sub.add_parser('grove-link-clips')
+    for name in ('graph','out'): p.add_argument('--'+name,type=Path,required=True)
     p = sub.add_parser('identity-review')
     for name in ('snapshot', 'changes', 'out'): p.add_argument('--'+name, type=Path, required=True)
     p = sub.add_parser('project-clips')
@@ -24,7 +28,11 @@ def add_commands(sub):
 
 def run(args):
     if args.out.exists(): raise FileExistsError('choose a new output; original graphs are never overwritten')
-    if args.command == 'identity-review':
+    if args.command == 'align-facts':
+        from .fact_evidence import align_evidence
+        facts,clips=read(args.facts),read(args.clips)
+        result=[dict(fact,**align_evidence(fact['evidence_refs'],clips)) for fact in facts]
+    elif args.command == 'identity-review':
         result = review_identity(read(args.snapshot), read(args.changes))
     elif args.command == 'project-clips':
         state = read(args.state)['identity_state']
@@ -47,6 +55,9 @@ def run(args):
                                         [read(p) for p in args.snapshot]).to_dict()
             if VideoHypergraph.from_dict(result).to_dict() != result:
                 raise AssertionError('graph round-trip changed character projection')
+        elif args.command == 'grove-link-clips':
+            from hypervideo.modules.fact_clips import rebuild_fact_clips
+            result=rebuild_fact_clips(graph).to_dict()
         else:
             result = dict(matches=character_hits(graph, args.character, args.role),
                 identity_state_id=graph.character_catalog['state']['state_id'])

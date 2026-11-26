@@ -1,5 +1,9 @@
 # 实际验证记录
 
+2026-11-26 fact→clip 更新：完整 156 项 CPU 测试通过，新增 27 项（15 独立模块、12 Grove）。覆盖发言时间与未知 speaker、实际解码帧 PTS、多图 API 输入协议、视觉区间/点帧、帧证据校验、错误 ID/媒体/来源、跨窗口交集、重叠覆盖去重、未定位、真实 writer 和图重载、身份修订不移动证据、窗口重建、引用范围/cutoff、旧引用拒用、关闭视觉编码仍保留引用，以及独立/Grove CLI 输出一致性。新增 `smoke_fact_clips.py` 生成 4 条 facts、2 个 clips、4 条边，覆盖状态为 3 complete + 1 unlocalized；是合成结果，不是准确率。本机实际执行 ffmpeg，定位 API/模型和 writer 使用明确测试替身，未运行真实视觉模型。
+
+本次干净目录部署：仅导出仓库文件，从 bundle 离线还原 Grove 并应用更新补丁。90 项独立模块测试、66 项 Grove 测试均通过；原有三条 smoke 与新增 fact-clips smoke 共四条全部通过；18 个 Grove 修改文件与工作目录逐字节一致，Python AST 和 Git diff 空白检查通过。preflight 仍诚实报告完整上游环境未就绪。
+
 日期：2026-11-26。环境：macOS，Python 3.13.9；隔离环境 NumPy 2.5.5、Pydantic 2.14.4、HDBSCAN 0.8.44、scikit-learn 1.9.1、SciPy 1.18.1。未运行任何 GPU 模型。
 
 人物图本次验证：129 项 CPU 测试通过（75 模块、54 Grove）。新增 31 项覆盖完整采样时刻、unknown、来源隔离、窗口交集、合并/撤销与歧义、版本哈希、反向索引、真实 writer 正文重建/图重载、跨 episode clips、人物绕过语义层级召回、日期/来源/cutoff、角色标签、文本缓存更新/保存失败、命令行重建及原图不被覆盖。`smoke_characters.py` 已生成修订前后图、2 个 clips、3 个 facts 及检索结果；使用合成观测、假 writer 和固定向量，不作为真实准确率。
