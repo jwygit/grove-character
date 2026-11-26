@@ -1,0 +1,5 @@
+-r requirements-test.txt
+fastapi==0.165.0
+starlette==1.10.0
+uvicorn==0.54.0
+httpx==0.28.1

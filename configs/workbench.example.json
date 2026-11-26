@@ -1,0 +1,11 @@
+{
+  "core": {
+    "description": "核心流程 + 视觉检索",
+    "config": "configs/deploy-visual.local.json"
+  },
+  "characters": {
+    "description": "语音 + 人物 + 双通道检索",
+    "config": "configs/workbench-characters.local.json",
+    "speech_config": "configs/whisper_pyannote.json"
+  }
+}

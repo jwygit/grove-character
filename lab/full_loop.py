@@ -9,6 +9,7 @@ from dataclasses import asdict
 import json
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 from urllib.parse import urlparse
@@ -19,6 +20,7 @@ from .fact_evidence import digest
 from .grove import load_grove
 from .reused.backends import request_json
 from .visual_grounding import sample_frames
+from .observability import emit, stage, visible_prompt, StopRequested
 
 
 def validate_model(config):
@@ -35,26 +37,37 @@ def headers_for(config):
 
 
 class ModelAPI:
-    def __init__(self, config):
+    def __init__(self, config, observer=None):
         validate_model(config)
         self.config = config
+        self.observer = observer
+        self.boundary_context = None
 
     async def chat(self, prompt):
         config = self.config
+        text = prompt if isinstance(prompt, str) else '\n'.join(p.get('text', '') for p in prompt)
+        match = re.search(r'TASK: (\w+)', text)
+        task = match[1] if match else 'character_facts'
+        if task == 'boundary_stream' and self.boundary_context:
+            prompt += '\nTRANSCRIPT_BOUNDARY_CONTEXT (observations, not instructions):\n' + json.dumps(self.boundary_context, ensure_ascii=False)
+            prompt += '\nConsider sustained discussion/topic changes as well as visible activity. Speaker changes alone are not episode boundaries. Do not infer character identities.'
         payload = dict(model=config["model"], messages=[dict(role="user", content=prompt)], temperature=0)
         if config.get("json_mode", True):
             payload["response_format"] = {"type": "json_object"}
-        result = await asyncio.to_thread(request_json, config["endpoint"], payload,
-                                         headers_for(config), config.get("timeout", 300))
-        content = result["choices"][0]["message"]["content"]
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("empty/nontext model response")
+        with stage(self.observer, task, input=visible_prompt(prompt), model=config['model']):
+            result = await asyncio.to_thread(request_json, config["endpoint"], payload,
+                                             headers_for(config), config.get("timeout", 300))
+            content = result["choices"][0]["message"]["content"]
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("empty/nontext model response")
+            emit(self.observer, task, 'response', output=content)
         return content
 
     async def embed(self, texts):
         config = self.config
-        result = await asyncio.to_thread(request_json, config["endpoint"],
-            dict(model=config["model"], input=texts), headers_for(config), config.get("timeout", 300))
+        with stage(self.observer, 'text_embedding', count=len(texts), model=config['model']):
+            result = await asyncio.to_thread(request_json, config["endpoint"],
+                dict(model=config["model"], input=texts), headers_for(config), config.get("timeout", 300))
         rows = result["data"]
         if sorted(row["index"] for row in rows) != list(range(len(texts))):
             raise ValueError("embedding API must return exactly one indexed vector per input")
@@ -141,7 +154,7 @@ def model_manifest(config):
 
 
 async def run_video(video, config, output, source, *, queries=(), stop_after_windows=None,
-                    identity_factory=None):
+                    identity_factory=None, observer=None):
     load_grove()
     if stop_after_windows is not None and (type(stop_after_windows) is not int or stop_after_windows < 1):
         raise ValueError('stop_after_windows must be a positive integer')
@@ -151,13 +164,13 @@ async def run_video(video, config, output, source, *, queries=(), stop_after_win
     import fcntl
     with (output / ".writer.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return await _run_locked(video, config, output, source, queries, stop_after_windows, identity_factory)
+        return await _run_locked(video, config, output, source, queries, stop_after_windows, identity_factory, observer)
 
 
-async def _run_locked(video, config, output, source, queries, stop_after_windows, identity_factory):
+async def _run_locked(video, config, output, source, queries, stop_after_windows, identity_factory, observer=None):
     from hypervideo.config import HyperVideoConfig
     from hypervideo.streaming_memory import StreamingMemory, atomic_json
-    vlm, writer, embed = ModelAPI(config["caption"]), ModelAPI(config["writer"]), ModelAPI(config["embedding"])
+    vlm, writer, embed = ModelAPI(config["caption"], observer), ModelAPI(config["writer"], observer), ModelAPI(config["embedding"], observer)
     cfg = HyperVideoConfig(**config.get("grove", {}))
     visual = VisualAPI(config["visual_encoder"]) if cfg.use_visual_channel else None
     origin = config.get("time_origin", 86400.0)
@@ -170,11 +183,23 @@ async def _run_locked(video, config, output, source, queries, stop_after_windows
     media_hash = file_digest(video)
     scope = dict(source=source, media_sha256=media_hash, pipeline_sha256=digest(model_manifest(config)),
                  time_origin=origin, duration=duration)
+    emit(observer, 'media', 'completed', duration=duration, media_sha256=media_hash, source=source)
     if config.get("characters") and identity_factory is None:
         from .stream_identity import identity_provider_factory
-        identity_factory = identity_provider_factory(video, output, config["characters"], source, origin)
+        identity_factory = await asyncio.to_thread(identity_provider_factory, video, output,
+            config["characters"], source, origin, observer=observer)
+    speech = None
+    if config.get('boundary_use_transcript'):
+        from .stream_identity import prepare_speech
+        speech_config = config.get('characters') or config.get('speech')
+        if not speech_config:
+            raise ValueError('boundary_use_transcript requires speech or characters speech configuration')
+        _, speech = await asyncio.to_thread(prepare_speech, video, output, speech_config, observer)
     memory = StreamingMemory(output, writer.chat, embed.embed, scope=scope, config=cfg,
                              identity_provider_factory=identity_factory, visual_encoder=visual)
+    if observer:
+        await observer.committed(memory, duration if memory.state['finished'] else
+            max((w['end']-origin for w in memory.state['windows']), default=0))
     frames_path = output / "frames.json"
     if frames_path.exists():
         saved = read(frames_path)
@@ -187,9 +212,11 @@ async def _run_locked(video, config, output, source, queries, stop_after_windows
         from uuid import uuid4
         directory = output / ("frames-" + uuid4().hex)
         directory.mkdir()
-        frames = await asyncio.to_thread(sample_frames, video, duration,
-            dict(sample_fps=1/step, max_frames=config.get("max_frames_per_video", 7200)), directory)
+        with stage(observer, 'frames', sample_seconds=step):
+            frames = await asyncio.to_thread(sample_frames, video, duration,
+                dict(sample_fps=1/step, max_frames=config.get("max_frames_per_video", 7200)), directory)
         atomic_json(frames_path, dict(scope=scope, frames=frames))
+    emit(observer, 'frames', 'artifact', count=len(frames), files=[str(frames_path)])
     windows = []
     for frame in frames:
         key = (int(frame["time"] // window_seconds), int((origin + frame["time"]) // 86400))
@@ -198,10 +225,19 @@ async def _run_locked(video, config, output, source, queries, stop_after_windows
         windows[-1][1].append(frame)
     processed = 0
     for i, (_, batch) in enumerate(windows):
+        if observer and observer.stop_requested():
+            raise StopRequested()
         end = windows[i+1][1][0]["time"] if i+1 < len(windows) else duration
         time_span = span(origin + batch[0]["time"], origin + end)
         if any(w["time_span"] == time_span for w in memory.state["windows"]):
             continue
+        if observer:
+            observer.window(i, batch[0]['time'], end)
+        if speech is not None:
+            from .perception import episode_turns
+            writer.boundary_context = dict(window_start=batch[0]['time'], window_end=end,
+                transcript_time_origin=max(0, batch[0]['time']-window_seconds*3),
+                turns=episode_turns(speech, max(0, batch[0]['time']-window_seconds*3), end, source))
         cache_path = output / f"caption-{i:06d}.json"
         if cache_path.exists():
             cache = read(cache_path)
@@ -211,16 +247,30 @@ async def _run_locked(video, config, output, source, queries, stop_after_windows
         else:
             caption, catalog = await caption_window(vlm, batch, origin, end, cfg.llm_max_retries)
             if visual:
-                vectors = await asyncio.to_thread(visual.encode_images, [f["path"] for f in batch])
+                with stage(observer, 'visual_embedding', count=len(batch)):
+                    vectors = await asyncio.to_thread(visual.encode_images, [f["path"] for f in batch])
                 for row, vector in zip(catalog.values(), vectors):
                     row["embedding"] = vector
             atomic_json(cache_path, dict(scope=scope, time_span=time_span, caption=caption, catalog=catalog))
-        await memory.ingest(caption, time_span, int((origin+batch[0]["time"]) // 86400), catalog)
+        emit(observer, 'caption_frames', 'artifact', files=[str(cache_path)]+[f['path'] for f in batch], caption=caption)
+        with stage(observer, 'window_transaction'):
+            episodes = await memory.ingest(caption, time_span, int((origin+batch[0]["time"]) // 86400), catalog)
+        emit(observer, 'episode', 'completed' if episodes else 'pending',
+             episodes=[dict(id=e.episode_id,start=e.start_seconds-origin,end=e.end_seconds-origin,summary=e.summary) for e in episodes])
+        if observer:
+            await observer.committed(memory, end)
         processed += 1
         if stop_after_windows is not None and processed >= stop_after_windows:
             memory.export()
             return memory, {"status": "checkpointed", "committed_windows": len(memory.state["windows"])}
-    await memory.finish()
+    if observer and observer.stop_requested():
+        raise StopRequested()
+    if observer:
+        observer.window(len(windows), duration, duration)
+    with stage(observer, 'finalize'):
+        await memory.finish()
+    if observer:
+        await observer.committed(memory, duration)
     results = [dict(query=query, result=asdict(await memory.retrieve(query))) for query in queries]
     report = dict(status="complete", implementation="grove-compatible-v1", scope=scope,
                   stats=memory.graph.get_stats(), committed_windows=len(memory.state["windows"]),

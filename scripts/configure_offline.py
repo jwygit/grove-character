@@ -17,7 +17,7 @@ def sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def configure(stage, models, visual_url, vlm_url, embedding_url, speech_input, accept_links):
+def configure(stage, models, visual_url, vlm_url, embedding_url, speech_input, accept_links, for_workbench=False):
     manifest = json.loads((models / "manifest.json").read_text())
 
     def revision(name):
@@ -44,11 +44,12 @@ def configure(stage, models, visual_url, vlm_url, embedding_url, speech_input, a
         config["visual_encoder"].update(server_url=visual_url, backbone=health["backbone"],
                                        dim=health["dim"], model_revision=expected)
     if stage == "characters":
-        if not speech_input or not speech_input.is_file():
-            raise ValueError("characters require --speech-input from the speech command")
-        speech = json.loads(speech_input.read_text())
-        if speech.get("status") != "completed" or not speech.get("audio_sha256"):
-            raise ValueError("speech input must be completed and retain PCM provenance")
+        if not for_workbench:
+            if not speech_input or not speech_input.is_file():
+                raise ValueError("characters require --speech-input, or --for-workbench with a server ASR profile")
+            speech = json.loads(speech_input.read_text())
+            if speech.get("status") != "completed" or not speech.get("audio_sha256"):
+                raise ValueError("speech input must be completed and retain PCM provenance")
         face_root = models / "insightface"
         onnx = sorted((face_root / "models" / "buffalo_l").glob("*.onnx"))
         required = {"1k3d68.onnx", "2d106det.onnx", "det_10g.onnx", "genderage.onnx", "w600k_r50.onnx"}
@@ -65,8 +66,12 @@ def configure(stage, models, visual_url, vlm_url, embedding_url, speech_input, a
         grounding = read("visual_grounding.json")
         grounding.update(endpoint=vlm_url, model="grove-vlm", max_frames=40,
                          model_revision=config["caption"]["model_revision"])
-        config["characters"] = dict(speech_input=str(speech_input.resolve()),
-            perception=perception, association=association, grounding=grounding, accept_links=accept_links)
+        config["characters"] = dict(perception=perception, association=association,
+                                    grounding=grounding, accept_links=accept_links)
+        if for_workbench:
+            config['boundary_use_transcript'] = True
+        else:
+            config['characters']['speech_input'] = str(speech_input.resolve())
     return config
 
 
@@ -78,13 +83,14 @@ def main():
     parser.add_argument("--vlm-url", default="http://127.0.0.1:8000/v1/chat/completions")
     parser.add_argument("--embedding-url", default="http://127.0.0.1:8001/v1/embeddings")
     parser.add_argument("--speech-input", type=Path)
+    parser.add_argument("--for-workbench", action="store_true", help="ASR is prepared per upload by the workbench profile")
     parser.add_argument("--accept-model-links", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output exists; choose a new config name to preserve experiment settings")
     config = configure(args.stage, args.models.resolve(), args.visual_url, args.vlm_url,
-                       args.embedding_url, args.speech_input, args.accept_model_links)
+                       args.embedding_url, args.speech_input, args.accept_model_links, args.for_workbench)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
     print(args.output.resolve())

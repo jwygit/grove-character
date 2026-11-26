@@ -1,6 +1,6 @@
 # 视频记忆工作台：交互与服务设计
 
-状态：**设计稿，未实现在线上传、SSE、历史快照服务或回答生成接口**。现有 `lab.full_loop` 仍是离线视频/API 驱动。2026-11-26 已核对代码和中文视频来源，并制作两种可交互界面方案；原型使用虚构样例，不能作为本节目转录、模型预测或评测结果。本页描述拟新增服务与验收要求，不改变现有主循环行为。
+状态：**时间线工作台首版已实现**（2026-11-26）。真实入口、部署和测试见 [WORKBENCH.md](WORKBENCH.md)。以下保留设计依据与素材选择；原型中的虚构样例不进入生产服务，也不作为模型评测。实际采用离线可部署的原生 HTML/CSS/JS + FastAPI；已完成上传/SSE/版本快照/人物检查/引用问答，严格增量 ASR、人工审核写回和按原耗时重演仍未实现。
 
 ## 1. 推荐演示素材
 
@@ -49,7 +49,7 @@
 
 如果要“模型只看到播放器已播内容”的严格在线模式，还需限制输入供给，并把当前整段 ASR/diarization 改成增量处理。完整音轨上的离线 diarization 会使用后文上下文；仅把显示时间截断并不能证明没有未来信息。这个模式单独实现和评估，不与首版观察界面混称已经支持。
 
-## 4. 当前代码必须补的能力
+## 4. 实现前的缺口与对应补充
 
 | 能力 | 当前代码实际状态 | 服务化改动 |
 |---|---|---|
@@ -67,7 +67,7 @@
 
 ## 5. 服务架构与接口草案
 
-建议第一版在内网运行：React/TypeScript 页面 + FastAPI 控制服务 + 独立 Python 推理进程 + SQLite 任务/事件库 + 现有文件产物。先按 GPU 资源串行排队，不先引入多机任务集群。页面不直接持有模型密钥。
+第一版已按内网运行实现：原生 HTML/CSS/JavaScript 页面 + FastAPI 控制服务 + 独立 Python 推理进程 + SQLite 任务/事件库 + 现有文件产物。先按 GPU 资源串行排队，不先引入多机任务集群。页面不直接持有模型密钥。
 
 ```mermaid
 flowchart LR
@@ -87,7 +87,7 @@ flowchart LR
     Answer --> Browser
 ```
 
-API 草案（尚未提供对应可执行入口）：
+首版 API（以 `lab/workbench/app.py` 与 `/docs` 为准）：
 
 | 接口 | 作用 |
 |---|---|
@@ -96,12 +96,12 @@ API 草案（尚未提供对应可执行入口）：
 | `GET /api/runs/{id}` | 任务状态、分阶段进度、当前提交/可查询版本 |
 | `GET /api/runs/{id}/events` | SSE，携带递增 event ID；断线后从 last-event-id/cursor 继续补发 |
 | `GET /api/videos/{id}/media` | 支持浏览器 Range 请求和拖动定位 |
-| `GET /api/runs/{id}/snapshots/{version}` | 查看该版本的 episode/fact/topic/人物索引及来源，不返回将来的状态 |
+| `GET /api/runs/{id}/snapshot?version={version}` | 查看该版本的 episode/fact/topic/人物索引及来源，不返回将来的状态 |
 | `GET /api/runs/{id}/artifacts/{artifact_id}` | 帧、脸裁图、音频切片、模型可见输入输出等；服务端解析白名单产物 ID |
 | `POST /api/runs/{id}/questions` | 固定问题、检索范围、版本及 playback time，返回回答/引用 |
 | `POST /api/runs/{id}/stop` | 请求安全停止，标明正在结束当前阶段；恢复使用已提交 checkpoint |
 
-上传采用 FastAPI 的 `UploadFile` 方式，但重型模型推理放独立进程，避免占住 Web 请求；阶段通知优先选服务端单向推送的 SSE，控制动作用普通 HTTP。实现可依据 [FastAPI 上传文档](https://fastapi.tiangolo.com/tutorial/request-files/)、[后台任务的重计算注意点](https://fastapi.tiangolo.com/tutorial/background-tasks/#caveat)、[SSE 事件与重连机制](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events)。
+实际上传采用 FastAPI `Request.stream()` 读取 raw body，并在写盘时限制大小，但重型模型推理放独立进程，避免占住 Web 请求；阶段通知优先选服务端单向推送的 SSE，控制动作用普通 HTTP。实现可依据 [FastAPI 上传文档](https://fastapi.tiangolo.com/tutorial/request-files/)、[后台任务的重计算注意点](https://fastapi.tiangolo.com/tutorial/background-tasks/#caveat)、[SSE 事件与重连机制](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events)。
 
 ## 6. 事件、版本与防止“偷看未来”
 
@@ -143,7 +143,7 @@ API 草案（尚未提供对应可执行入口）：
 
 回答至少返回 `answer`、`citations`、`memory_version`、`coverage`、`insufficient_evidence`。引用必须落在检索输入集合中；每条引用可展开 fact 原文、发言/帧、character 映射来源和具体时间。模型概括与直接转录分别标记，不能把推断写成原话；没有定位到视频时明确显示未定位，不虚构跳转时间。
 
-首版人物面板支持查看身份、代表脸、声音回放、出现/发言时间线及相关 facts。人工确认/撤销应另设审核分支：当前 `identity-review → grove-project` 还不能自动导回主循环 checkpoint，因此第一版不放一个看似即时生效的“合并人物”按钮。审核写回待有正式版本迁移后再开放。
+首版人物面板支持查看身份、代表脸、发言回看和相关 facts；完整关联图通过证据详情查看。人工确认/撤销应另设审核分支：当前 `identity-review → grove-project` 还不能自动导回主循环 checkpoint，因此第一版不放一个看似即时生效的“合并人物”按钮。审核写回待有正式版本迁移后再开放。
 
 ## 8. 首版范围和验收
 

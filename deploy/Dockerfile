@@ -4,9 +4,9 @@ FROM python:3.11-slim-bookworm AS core
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg git ca-certificates libsndfile1 libgomp1 libgl1 curl unzip \
     build-essential && rm -rf /var/lib/apt/lists/*
-COPY requirements-test.txt /opt/requirements-core.txt
+COPY requirements-test.txt requirements-workbench.txt /opt/
 COPY deploy/entrypoint.sh /opt/grove-entrypoint.sh
-RUN pip install --no-cache-dir -r /opt/requirements-core.txt huggingface-hub==0.34.4 \
+RUN pip install --no-cache-dir -r /opt/requirements-workbench.txt huggingface-hub==0.34.4 \
     && pip check && pip freeze > /opt/python-packages.txt
 ENV HF_HOME=/tmp/grove-hf XDG_CACHE_HOME=/tmp/grove-cache
 WORKDIR /work
@@ -41,3 +41,13 @@ RUN pip install --no-cache-dir \
     soundfile sentencepiece protobuf av decord pyyaml \
     && pip check && pip freeze > /opt/python-packages.txt
 ENV PYTHONPATH=/opt/3D-Speaker:/work
+
+FROM character AS workbench
+# One service queues the main Grove/M3 process, but launches ASR using its own
+# Python/CUDA libraries. Do not mix pyannote 4's Torch with M3's pinned stack.
+RUN python -m venv /opt/asr-env \
+    && /opt/asr-env/bin/pip install --no-cache-dir -r /opt/requirements-test.txt \
+       faster-whisper==1.2.1 pyannote.audio==4.0.3 \
+    && /opt/asr-env/bin/pip check \
+    && /opt/asr-env/bin/pip freeze > /opt/asr-python-packages.txt
+ENV PYANNOTE_METRICS_ENABLED=0

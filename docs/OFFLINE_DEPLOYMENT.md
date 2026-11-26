@@ -52,7 +52,7 @@ docker image inspect --format '{{.Id}} {{.RepoTags}}' \
   > "$GROVE_ASSETS/image-ids.txt"
 ```
 
-依赖隔离的原因：核心只装 `requirements-test.txt` 和下载工具；SigLIP 用 Transformers 4.51.3 / Torch 2.6；ASR 用 pyannote 4.0.3（其依赖指定 Torch/Torchaudio 2.8、TorchCodec 0.7）；M3 使用其上游指定的 Transformers commit 和 `qwen-omni-utils==0.0.4`，另装人脸/声纹依赖。vLLM 是独立服务镜像，不装进 M3 环境。
+依赖隔离的原因：核心安装 `requirements-workbench.txt`（含原 CPU 核心依赖、Web/API 库）和下载工具；SigLIP 用 Transformers 4.51.3 / Torch 2.6；ASR 用 pyannote 4.0.3（其依赖指定 Torch/Torchaudio 2.8、TorchCodec 0.7）；M3 使用其上游指定的 Transformers commit 和 `qwen-omni-utils==0.0.4`，另装人脸/声纹依赖。vLLM 是独立服务镜像，不装进 M3 环境。
 
 M3 首次使用 `sdpa`，避免先编译 FlashAttention；这不是原上游默认的 `flash_attention_2`，须作为实验配置记录。需要严格比较时，另外制作带匹配 FlashAttention 的镜像、改配置并用新输出目录跑同一组数据。
 
@@ -299,3 +299,7 @@ PY
 同一视频、模型、配置、输出目录重复执行主循环会恢复/复用缓存。切换视觉开关、人物策略、模型 revision、视频或采样参数时使用新的配置名及运行目录。ASR 独立命令要求新输出目录；已经成功的 ASR 不必重跑。`--query` 返回检索证据，尚不自动生成最终问答文本。
 
 上游依据：[Qwen2.5-VL 模型](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct)、[Qwen3 embedding](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)、[vLLM 0.10.2 参数源码](https://github.com/vllm-project/vllm/blob/v0.10.2/vllm/engine/arg_utils.py)、[SigLIP API](https://huggingface.co/docs/transformers/v4.51.3/en/model_doc/siglip)、[faster-whisper CUDA 依赖](https://github.com/SYSTRAN/faster-whisper#requirements)、[pyannote 离线模型](https://huggingface.co/pyannote/speaker-diarization-community-1)、[pyannote 4.0.3 依赖](https://github.com/pyannote/pyannote-audio/blob/4.0.3/pyproject.toml)、[M3 安装说明](https://github.com/ByteDance-Seed/m3-agent)、[ONNX Runtime CUDA 依赖](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html)。
+
+## 10. 上传视频的在线工作台
+
+核心 API 与 SigLIP 启动完成后，可通过 `python -m lab.workbench` 启动时间线工作台；支持上传、实时阶段输出、历史快照、人物和带引用问答。人物版新增 `workbench` 镜像，将 ASR 放进独立 venv，由任务按上传视频自动执行。完整构建/启动/测试命令见 [工作台部署与使用](WORKBENCH.md)。

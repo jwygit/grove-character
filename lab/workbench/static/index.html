@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Grove · 视频记忆工作台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">G<span>GROVE / 视频记忆</span></a
+      ><span class="badge">时间线工作台</span
+      ><span id="connection" role="status">连接中</span>
+    </header>
+    <main>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">WATCH. UNDERSTAND. REMEMBER.</p>
+          <h1>看见一段视频，如何成为记忆。</h1>
+          <p>观察动态分段、人物关联与记忆写入，再带着证据提问。</p>
+        </div>
+        <button id="refresh">刷新任务</button>
+      </section>
+      <section class="toolbar panel" aria-label="任务管理">
+        <label class="file-label"
+          >选择视频<input type="file" id="file" accept="video/mp4,.mp4"
+        /></label>
+        <label
+          >处理配置<select id="profile" aria-label="处理配置"></select
+        ></label>
+        <button id="upload" class="primary" disabled>上传并开始</button>
+        <span id="upload-status" aria-live="polite">MP4 · H.264 + AAC</span>
+        <label class="task-label"
+          >历史任务<select id="runs" aria-label="历史任务">
+            <option value="">选择任务</option>
+          </select></label
+        >
+        <button id="stop" disabled>请求停止</button
+        ><button id="resume" disabled>恢复任务</button>
+      </section>
+      <div id="error" role="alert" hidden></div>
+      <section class="workspace">
+        <div class="view">
+          <div class="video-shell">
+            <video id="video" controls preload="metadata" playsinline></video>
+            <div id="video-empty">
+              上传视频，开始一次真实的 Grove 运行<span
+                >模型输出与记忆将在处理过程中逐步出现</span
+              >
+            </div>
+          </div>
+          <section class="panel progress-panel">
+            <div class="row">
+              <strong id="video-name">尚未选择视频</strong
+              ><span id="run-state" class="badge">等待上传</span>
+            </div>
+            <div class="track">
+              <span>播放位置</span
+              ><progress id="play-progress" max="1" value="0"></progress
+              ><output id="play-time">00:00</output>
+            </div>
+            <div class="track">
+              <span>窗口已处理</span
+              ><progress id="process-progress" max="1" value="0"></progress
+              ><output id="process-time">00:00</output>
+            </div>
+            <div class="track">
+              <span>记忆已覆盖</span
+              ><progress id="memory-progress" max="1" value="0"></progress
+              ><output id="memory-time">00:00</output>
+            </div>
+            <p id="pending" class="muted">尚未开始处理</p>
+            <p id="audio-note" class="notice" hidden>
+              音频使用整段离线转录/说话人分段；此页面展示实时处理结果，不代表严格因果流式推理。
+            </p>
+          </section>
+          <section class="panel timeline-panel">
+            <div class="row">
+              <h2>Episode 时间线</h2>
+              <label
+                >记忆范围
+                <select id="mode">
+                  <option value="playback">截至播放位置</option>
+                  <option value="latest">最新已提交记忆</option>
+                </select></label
+              >
+            </div>
+            <p id="snapshot-label" class="muted">尚无可查询版本</p>
+            <div id="episodes" class="episodes empty">
+              动态分段完成后，这里会出现 episode。
+            </div>
+          </section>
+        </div>
+        <aside class="panel inspector">
+          <div class="tabs" role="tablist" aria-label="处理详情">
+            <button role="tab" aria-selected="true" data-tab="stages">
+              处理过程</button
+            ><button role="tab" aria-selected="false" data-tab="people">
+              人物关联</button
+            ><button role="tab" aria-selected="false" data-tab="memory">
+              记忆详情
+            </button>
+          </div>
+          <div id="stages" class="tab-pane">
+            <div class="row">
+              <h2>真实阶段输出</h2>
+              <span id="event-count" class="muted">0 条</span>
+            </div>
+            <p class="muted">
+              阶段成功后仍需窗口提交；中间结果不直接进入问答。
+            </p>
+            <div id="events" class="event-list empty">等待任务开始</div>
+          </div>
+          <div id="people" class="tab-pane" hidden>
+            <h2>Face → Voice → Character</h2>
+            <p class="muted">
+              人物标签是系统 ID；对应关系与证据来自已提交快照。
+            </p>
+            <div id="people-list" class="empty">当前版本暂无人物关联</div>
+          </div>
+          <div id="memory" class="tab-pane" hidden>
+            <h2>事实、视觉片段与话题</h2>
+            <div id="memory-list" class="empty">当前版本暂无记忆</div>
+          </div>
+        </aside>
+      </section>
+      <section class="panel qa">
+        <div class="row">
+          <div>
+            <p class="eyebrow">ASK WITH EVIDENCE</p>
+            <h2>向视频提问</h2>
+          </div>
+          <span class="badge">Grove 检索 · 可回看引用</span>
+        </div>
+        <form id="question-form">
+          <label class="sr-only" for="question">问题</label
+          ><input
+            id="question"
+            maxlength="4000"
+            placeholder="例如：刚才是谁提出了这个观点？之后有补充吗？"
+            required
+          /><label class="sr-only" for="person-filter">人物筛选</label
+          ><select id="person-filter">
+            <option value="">全部人物</option></select
+          ><button id="ask" class="primary" disabled>提问 ↗</button>
+        </form>
+        <p id="question-state" class="muted" aria-live="polite">
+          每个回答固定在发问时选中的记忆版本；切换播放位置不会改写旧回答。
+        </p>
+        <div id="answers"></div>
+      </section>
+      <footer>
+        实时指阶段结果持续推送；处理速度取决于模型和设备。未提交或索引未就绪的内容不会用于回答。
+      </footer>
+    </main>
+    <dialog id="detail">
+      <div class="row">
+        <h2 id="detail-title">证据详情</h2>
+        <button id="close-detail" aria-label="关闭详情">关闭 ×</button>
+      </div>
+      <div id="detail-media"></div>
+      <pre id="detail-text"></pre>
+    </dialog>
+  </body>
+</html>

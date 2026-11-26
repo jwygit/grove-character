@@ -11,7 +11,7 @@
 | 原版有什么、缺什么；此前已做什么、本次补了什么 | [改动说明](docs/CHANGES.md) |
 | 当前架构、实际执行顺序、各层数据分工，以及 fact 如何对应人物和 clips | [架构与数据流程](docs/ARCHITECTURE.md) |
 | 内网要准备哪些模型/镜像，先核心再人物的部署与测试命令 | [内网 GPU 部署](docs/OFFLINE_DEPLOYMENT.md) |
-| 上传视频、观察处理过程、人物/证据时间线和边看边问的网页设计（待实现） | [视频记忆工作台设计](docs/WORKBENCH_DESIGN.md) |
+| 上传视频、阶段实时输出、人物关联和带引用问答 | [工作台部署与使用](docs/WORKBENCH.md) · [设计与素材](docs/WORKBENCH_DESIGN.md) |
 | 在 GPU/API 服务器部署，先跑核心、再启用人物，或升级已有副本 | [完整主循环手册](docs/FULL_LOOP.md) |
 | 分开测试 ASR、脸声关联、character 归属，如何控制变量和计分 | [实验设计](docs/DESIGN.md) / [独立模块运行手册](docs/RUNBOOK.md) |
 | 人物图、视觉检索和事实证据的具体字段/接口 | [人物图](docs/CHARACTER_GRAPH.md) / [视觉检索](docs/VISUAL_RETRIEVAL.md) / [fact→clip](docs/FACT_CLIP_EVIDENCE.md) |
@@ -82,7 +82,7 @@ M3 原始输出没有逐句露脸判断，本项目不再为它虚构此标签�
 .venv/bin/python scripts/smoke.py runs/smoke-new
 ```
 
-新机器先安装 `requirements-test.txt`；运行 `python scripts/setup_grove.py`，会从仓库内的 `upstream/Grove.bundle` 离线还原固定版本、验证校验和并应用补丁，无需再访问 Grove 上游。现有目录不会被覆盖。两段 AMI 测试视频也随仓库提供。
+新机器先安装 `requirements-workbench.txt`；运行 `python scripts/setup_grove.py`，会从仓库内的 `upstream/Grove.bundle` 离线还原固定版本、验证校验和并应用补丁，无需再访问 Grove 上游。现有目录不会被覆盖。两段 AMI 测试视频也随仓库提供。
 
 已有服务器仅执行 `git pull` 不会更新被忽略的 `vendor/Grove`。请按 [升级步骤](docs/FULL_LOOP.md#已有部署如何升级) 先保留旧副本，再重建本次补丁对应的 vendor。
 
@@ -93,7 +93,7 @@ git clone https://github.com/jwygit/grove-character.git
 cd grove-character
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-test.txt
+pip install -r requirements-workbench.txt
 python scripts/setup_grove.py
 python -m unittest discover -s tests -t . -v
 python scripts/preflight.py

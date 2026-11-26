@@ -97,6 +97,11 @@ class ModelFixture:
             evidence = json.JSONDecoder().raw_decode(memory_text)[0]
             answer = dict(facts=[dict(content="<voice_0> says hello.", utterance_ids=[refs[0]["utterance_id"]], memory_ids=[]),
                                 dict(content="<face_0> holds a cup.", utterance_ids=[], memory_ids=[evidence["memories"][0]["id"]])])
+        elif task == "evidence_answer":
+            evidence = json.loads(text.split('EVIDENCE_JSON:\n', 1)[1])
+            citation = evidence[0]
+            answer = dict(answer=citation['content']+' ['+citation['citation_id']+']',
+                          citation_ids=[citation['citation_id']], insufficient_evidence=False)
         else:
             raise AssertionError(task)
         return {"choices": [{"message": {"content": json.dumps(answer)}}]}
